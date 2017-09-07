@@ -318,6 +318,11 @@ static int mlx5_cmd_set_fte(struct mlx5_core_dev *dev,
 	MLX5_SET(flow_context, in_flow_context, action, fte->action.action);
 	MLX5_SET(flow_context, in_flow_context, encap_id, fte->action.encap_id);
 	MLX5_SET(flow_context, in_flow_context, modify_header_id, fte->action.modify_id);
+	/*
+	 * In case action != MLX5_FLOW_CONTEXT_ACTION_ENCRYPT or
+	 * action != MLX5_FLOW_CONTEXT_ACTION_DECRYPT, fte->action.esp_aes_gcm_id
+	 * shouldn't be set here. It means the FPGA takes care of this.
+	 */
 	in_match_value = MLX5_ADDR_OF(flow_context, in_flow_context,
 				      match_value);
 	memcpy(in_match_value, &fte->val, sizeof(fte->val));
