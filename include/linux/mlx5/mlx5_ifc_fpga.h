@@ -373,7 +373,8 @@ struct mlx5_ifc_fpga_destroy_qp_out_bits {
 struct mlx5_ifc_ipsec_extended_cap_bits {
 	u8         encapsulation[0x20];
 
-	u8         reserved_0[0x15];
+	u8         reserved_0[0x14];
+	u8         rx_no_trailer[0x1];
 	u8         ipv4_fragment[0x1];
 	u8         ipv6[0x1];
 	u8         esn[0x1];
