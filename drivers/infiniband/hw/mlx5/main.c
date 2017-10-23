@@ -59,6 +59,7 @@
 #include "mlx5_ib.h"
 #include "cmd.h"
 #include <linux/mlx5/fs_helpers.h>
+#include <linux/mlx5/accel.h>
 #include <rdma/uverbs_std_types.h>
 
 #define DRIVER_NAME "mlx5_ib"
@@ -3019,6 +3020,124 @@ unlock:
 	return ERR_PTR(err);
 }
 
+static u32 mlx5_ib_flow_action_flags_to_accel_xfrm_flags(u32 mlx5_flags)
+{
+	u32 flags = 0;
+
+	if (mlx5_flags & MLX5_IB_FLOW_ACTION_FLAGS_REQUIRE_METADATA)
+		flags |= MLX5_ACCEL_XFRM_FLAG_REQUIRE_METADATA;
+
+	return flags;
+}
+
+static struct ib_flow_action *mlx5_ib_create_flow_action_esp(struct ib_device *device,
+							     enum ib_flow_action_type type,
+							     const struct ib_flow_action_attrs_esp *attr,
+							     struct uverbs_attr_bundle *attrs)
+{
+	struct mlx5_ib_dev *mdev = to_mdev(device);
+	struct mlx5_ib_flow_action *action;
+	u64 action_flags;
+	int err;
+
+	err = uverbs_copy_from(&action_flags, attrs, MLX5_IB_CREATE_FLOW_ACTION_FLAGS);
+	if (err == -EFAULT)
+		return ERR_PTR(-EFAULT);
+
+	/* Currently flags is mandatory */
+	if (err == -ENOENT || action_flags >= MLX5_IB_FLOW_ACTION_FLAGS_RESERVED)
+		return ERR_PTR(-EOPNOTSUPP);
+
+	action = kmalloc(sizeof(*action), GFP_KERNEL);
+
+	if (!action)
+		return ERR_PTR(-ENOMEM);
+
+	switch (type) {
+	case IB_FLOW_ACTION_ESP: {
+		u64 flags =
+			mlx5_ib_flow_action_flags_to_accel_xfrm_flags(action_flags);
+		struct ib_flow_action_attrs_esp_keymat_aes_gcm *ib_aes_gcm;
+		struct ib_uverbs_flow_action_esp_keymat_aes_gcm *aes_gcm;
+		struct mlx5_accel_xfrm_ipsec_attrs accel_attrs;
+
+		if (!attr->keymat || attr->replay || attr->encap ||
+		    attr->spi || attr->seq || attr->tfc_pad ||
+		    attr->hard_limit_pkts ||
+		    (attr->flags & ~(IB_FLOW_ACTION_ESP_FLAGS_ESN_TRIGGERED |
+				     IB_UVERBS_FLOW_ACTION_ESP_FLAGS_ENCRYPT))) {
+			err = -EOPNOTSUPP;
+			goto err_parse;
+		}
+
+		if (attr->keymat->protocol != FLOW_ACTION_ESP_KEYMAT_AES_GCM) {
+			err = -EOPNOTSUPP;
+			goto err_parse;
+		}
+
+		ib_aes_gcm = container_of(attr->keymat,
+					  struct ib_flow_action_attrs_esp_keymat_aes_gcm,
+					  keymat);
+		aes_gcm = &ib_aes_gcm->attrs;
+
+		if (aes_gcm->icv_len != 16 ||
+		    aes_gcm->iv_algo != IB_UVERBS_FLOW_ACTION_IV_ALGO_SEQ) {
+			err = -EOPNOTSUPP;
+			goto err_parse;
+		}
+
+		accel_attrs.esn = attr->esn;
+		memcpy(&accel_attrs.key, &aes_gcm->aes_key,
+		       sizeof(accel_attrs.key));
+		accel_attrs.key_length = aes_gcm->key_len;
+		memcpy(&accel_attrs.salt, &aes_gcm->salt,
+		       sizeof(accel_attrs.salt));
+		memcpy(&accel_attrs.seqiv, &aes_gcm->iv,
+		       sizeof(accel_attrs.seqiv));
+		accel_attrs.is_esn =
+			!!(attr->flags & IB_FLOW_ACTION_ESP_FLAGS_ESN_TRIGGERED);
+		action->esp_aes_gcm.ctx =
+			mlx5_accel_ipsec_create_xfrm_ctx(mdev->mdev,
+							 &accel_attrs, flags);
+		if (IS_ERR(action->esp_aes_gcm.ctx))
+			err = PTR_ERR(action->esp_aes_gcm.ctx);
+		break;
+		}
+	default:
+		err = -EOPNOTSUPP;
+	};
+
+	if (err)
+		goto err_parse;
+
+	return &action->ib_action;
+
+err_parse:
+	kfree(action);
+	return ERR_PTR(err);
+}
+
+static int mlx5_ib_destroy_flow_action(struct ib_flow_action *action)
+{
+	struct mlx5_ib_flow_action *maction = to_mflow_act(action);
+
+	switch (action->type) {
+	case IB_FLOW_ACTION_ESP:
+		/*
+		 * We only support aes_gcm by now, so we implicitly know this is
+		 * the underline crypto.
+		 */
+		mlx5_accel_ipsec_destroy_xfrm_ctx(maction->esp_aes_gcm.ctx);
+		break;
+	default:
+		WARN_ON(true);
+		break;
+	}
+
+	kfree(maction);
+	return 0;
+}
+
 static int mlx5_ib_mcg_attach(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
 {
 	struct mlx5_ib_dev *dev = to_mdev(ibqp->device);
@@ -4461,10 +4580,21 @@ static void mlx5_ib_cleanup_multiport_master(struct mlx5_ib_dev *dev)
 	mlx5_nic_vport_disable_roce(dev->mdev);
 }
 
+static DECLARE_UVERBS_METHOD(mlx5_ib_method_flow_action_esp_create,
+			     UVERBS_FLOW_ACTION_ESP_CREATE, NULL,
+			     &UVERBS_ATTR_PTR_IN(MLX5_IB_CREATE_FLOW_ACTION_FLAGS, u64));
+
+static DECLARE_UVERBS_OBJECT(mlx5_ib_object_flow_action,
+			     UVERBS_OBJECT_FLOW_ACTION, NULL,
+			     &mlx5_ib_method_flow_action_esp_create);
+
+static DECLARE_UVERBS_OBJECT_TREE(mlx5_ib_objects,
+				  &mlx5_ib_object_flow_action);
+
 static int populate_specs_root(struct mlx5_ib_dev *dev)
 {
 	const struct uverbs_object_tree_def *default_root[] = {
-		uverbs_default_get_objects()};
+		&mlx5_ib_objects, uverbs_default_get_objects()};
 
 	dev->ib_dev.specs_root =
 		uverbs_alloc_spec_tree(ARRAY_SIZE(default_root), default_root);
@@ -4684,6 +4814,8 @@ static int mlx5_ib_stage_caps_init(struct mlx5_ib_dev *dev)
 	dev->ib_dev.uverbs_ex_cmd_mask |=
 			(1ull << IB_USER_VERBS_EX_CMD_CREATE_FLOW) |
 			(1ull << IB_USER_VERBS_EX_CMD_DESTROY_FLOW);
+	dev->ib_dev.create_flow_action_esp = mlx5_ib_create_flow_action_esp;
+	dev->ib_dev.destroy_flow_action = mlx5_ib_destroy_flow_action;
 	dev->ib_dev.driver_id = RDMA_DRIVER_MLX5;
 
 	err = init_node_data(dev);

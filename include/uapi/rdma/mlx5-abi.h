@@ -381,4 +381,14 @@ struct mlx5_ib_modify_wq {
 	__u32	comp_mask;
 	__u32	reserved;
 };
+
+enum mlx5_ib_flow_action_flags {
+	MLX5_IB_FLOW_ACTION_FLAGS_REQUIRE_METADATA	= 1 << 0,
+	MLX5_IB_FLOW_ACTION_FLAGS_RESERVED		= 1 << 1,
+};
+
+enum mlx5_ib_create_flow_action_attrs {
+	MLX5_IB_CREATE_FLOW_ACTION_FLAGS	= UVERBS_UDATA_DRIVER_DATA_FLAG | (1 << 0),
+};
+
 #endif /* MLX5_ABI_USER_H */
