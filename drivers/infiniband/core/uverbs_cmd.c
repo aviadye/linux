@@ -3439,6 +3439,173 @@ int ib_uverbs_ex_destroy_flow(struct ib_uverbs_file *file,
 	return ret;
 }
 
+union action_xfrms {
+	struct ib_uverbs_action_xfrm_esp_aes_gcm esp_aes_gcm;
+};
+
+static int parse_action_xfrm(u32 type, struct ib_udata *ucore,
+			     union action_xfrms *action,
+			     union ib_action_attrs *attr)
+{
+	size_t	action_req_size;
+	const size_t  kern_known_size = sizeof(*action) +
+		sizeof(struct ib_uverbs_create_action_xfrm);
+	const size_t  size = min_t(size_t, kern_known_size, ucore->inlen);
+	int ret = 0;
+
+	switch (type) {
+	case IB_UVERBS_ACTION_XFRM_ESP_AES_GCM:
+		action_req_size = sizeof(struct ib_uverbs_create_action_xfrm) +
+			sizeof(action->esp_aes_gcm);
+		if (ucore->inlen < action_req_size ||
+		    action->esp_aes_gcm.reserved ||
+		    action->esp_aes_gcm.comp_mask ||
+		    !ib_is_udata_cleared(ucore, action_req_size,
+					 size - action_req_size))
+			return -EOPNOTSUPP;
+
+		/* Possible ipsec key lengths according to the spec */
+		if (action->esp_aes_gcm.key_length != 32 &&
+		    action->esp_aes_gcm.key_length != 24 &&
+		    action->esp_aes_gcm.key_length != 16)
+			return -EINVAL;
+
+		if (IS_FIELD_SET(action->esp_aes_gcm,
+				 IB_UVERBS_ACTION_XFRM_ESP_AES_GCM_ATTR_ESN))
+			memcpy(&attr->esp_aes_gcm.esn, &action->esp_aes_gcm.esn,
+					sizeof(attr->esp_aes_gcm.esn));
+		if (IS_FIELD_SET(action->esp_aes_gcm,
+				 IB_UVERBS_ACTION_XFRM_ESP_AES_GCM_ATTR_KEY)) {
+			pr_err("%s:%d got key len %d", __func__, __LINE__, action->esp_aes_gcm.key_length);
+			attr->esp_aes_gcm.key_length = action->esp_aes_gcm.key_length;
+			memcpy(&attr->esp_aes_gcm.key, &action->esp_aes_gcm.key,
+					attr->esp_aes_gcm.key_length);
+		}
+		if (IS_FIELD_SET(action->esp_aes_gcm,
+				 IB_UVERBS_ACTION_XFRM_ESP_AES_GCM_ATTR_SALT))
+			memcpy(&attr->esp_aes_gcm.salt, &action->esp_aes_gcm.salt,
+					sizeof(attr->esp_aes_gcm.salt));
+		if (IS_FIELD_SET(action->esp_aes_gcm,
+				 IB_UVERBS_ACTION_XFRM_ESP_AES_GCM_ATTR_SEQIV))
+			memcpy(&attr->esp_aes_gcm.seqiv, &action->esp_aes_gcm.seqiv,
+				sizeof(attr->esp_aes_gcm.seqiv));
+
+		attr->esp_aes_gcm.flags = action->esp_aes_gcm.flags;
+
+		break;
+	default:
+		return -EOPNOTSUPP;
+	};
+
+	return ret;
+}
+
+int ib_uverbs_ex_create_action_xfrm(struct ib_uverbs_file *file,
+				    struct ib_device *ib_dev,
+				    struct ib_udata *ucore,
+				    struct ib_udata *uhw)
+{
+	struct {
+		struct ib_uverbs_create_action_xfrm	hdr;
+		union action_xfrms			action;
+	} cmd = {};
+	struct ib_uverbs_create_action_xfrm_resp  resp;
+	union ib_action_attrs		  attr;
+	struct ib_action_xfrm		  *action;
+	struct ib_uobject		  *uobj;
+	int				  ret;
+	size_t				  size;
+
+	if (ucore->inlen < sizeof(cmd.hdr))
+		return -EINVAL;
+
+	if (ucore->outlen < sizeof(resp))
+		return -ENOSPC;
+
+	size = min_t(size_t, sizeof(cmd), ucore->inlen);
+
+	if (ucore->inlen > sizeof(cmd) &&
+	    !ib_is_udata_cleared(ucore, sizeof(cmd),
+				 ucore->inlen - sizeof(cmd)))
+		return -EOPNOTSUPP;
+
+	ret = ib_copy_from_udata(&cmd, ucore, size);
+	if (ret)
+		return ret;
+
+	if (cmd.hdr.reserved)
+		return -EOPNOTSUPP;
+
+	ret = parse_action_xfrm(cmd.hdr.action_id, ucore, &cmd.action, &attr);
+	if (ret < 0)
+		return ret;
+
+	uobj  = uobj_alloc(uobj_get_type(action_xfrm), file->ucontext);
+	if (IS_ERR(uobj))
+		return PTR_ERR(uobj);
+
+	action = ib_dev->create_action_xfrm(ib_dev, cmd.hdr.action_id, &attr,
+					    uhw);
+	if (IS_ERR(action)) {
+		ret = PTR_ERR(action);
+		goto err_action;
+	}
+
+	atomic_set(&action->usecnt, 0);
+	action->device = ib_dev;
+	action->type = cmd.hdr.action_id;
+	action->uobject = uobj;
+	uobj->object = action;
+
+	resp.response_length = min_t(size_t, sizeof(resp), ucore->outlen);
+	resp.action_handle = uobj->id;
+
+	if (ib_copy_to_udata(ucore, &resp, resp.response_length)) {
+		ret = -EFAULT;
+		goto err_copy;
+	}
+
+	uobj_alloc_commit(uobj);
+	return ret;
+err_copy:
+	ib_dev->destroy_action_xfrm(action);
+err_action:
+	uobj_alloc_abort(uobj);
+	return ret;
+}
+
+int ib_uverbs_ex_destroy_action_xfrm(struct ib_uverbs_file *file,
+				     struct ib_device *ib_dev,
+				     struct ib_udata *ucore,
+				     struct ib_udata *uhw)
+{
+	struct ib_uverbs_destroy_action_xfrm	cmd;
+	struct ib_uobject *uobj;
+	int ret;
+
+	if (ucore->inlen < sizeof(cmd))
+		return -EINVAL;
+
+	if (ucore->inlen > sizeof(cmd) &&
+	    !ib_is_udata_cleared(ucore, sizeof(cmd),
+				 ucore->inlen - sizeof(cmd)))
+		return -EOPNOTSUPP;
+
+	ret = ib_copy_from_udata(&cmd, ucore, sizeof(cmd));
+	if (ret)
+		return ret;
+
+	if (cmd.comp_mask)
+		return -EINVAL;
+
+	uobj  = uobj_get_write(uobj_get_type(action_xfrm), cmd.action_handle,
+			       file->ucontext);
+	if (IS_ERR(uobj))
+		return PTR_ERR(uobj);
+
+	return uobj_remove_commit(uobj);
+}
+
 static int __uverbs_create_xsrq(struct ib_uverbs_file *file,
 				struct ib_device *ib_dev,
 				struct ib_uverbs_create_xsrq *cmd,

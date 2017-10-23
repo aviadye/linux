@@ -101,7 +101,9 @@ enum {
 	IB_USER_VERBS_EX_CMD_DESTROY_WQ,
 	IB_USER_VERBS_EX_CMD_CREATE_RWQ_IND_TBL,
 	IB_USER_VERBS_EX_CMD_DESTROY_RWQ_IND_TBL,
-	IB_USER_VERBS_EX_CMD_MODIFY_CQ
+	IB_USER_VERBS_EX_CMD_MODIFY_CQ,
+	IB_USER_VERBS_EX_CMD_CREATE_ACTION_XFRM,
+	IB_USER_VERBS_EX_CMD_DESTROY_ACTION_XFRM,
 };
 
 /*
@@ -1027,6 +1029,40 @@ struct ib_uverbs_create_flow_resp {
 struct ib_uverbs_destroy_flow  {
 	__u32 comp_mask;
 	__u32 flow_handle;
+};
+
+enum {
+	IB_UVERBS_ACTION_XFRM_UNSPECIFIED,
+	IB_UVERBS_ACTION_XFRM_ESP_AES_GCM = 1,
+};
+
+struct ib_uverbs_action_xfrm_esp_aes_gcm {
+	__u32				comp_mask;
+	__u32			        key_length;
+	__u8			        key[32];
+	__u8			        salt[4];
+	__u8			        seqiv[8];
+	__u8				esn[4];
+	__u32				flags; /* Use enum ib_ipsec_flags */
+	__u32				reserved;
+};
+
+struct ib_uverbs_create_action_xfrm {
+	__u32				action_id;
+	__u32				reserved;
+	/* Following are the action parameters
+	 * struct ib_uverbs_action_xfrm_xxxx;
+	 */
+};
+
+struct ib_uverbs_create_action_xfrm_resp {
+	__u32				response_length;
+	__u32				action_handle;
+};
+
+struct ib_uverbs_destroy_action_xfrm {
+	__u32				comp_mask;
+	__u32				action_handle;
 };
 
 struct ib_uverbs_create_srq {

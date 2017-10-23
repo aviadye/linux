@@ -1810,6 +1810,7 @@ enum ib_flow_spec_type {
 	/* Actions */
 	IB_FLOW_SPEC_ACTION_TAG         = 0x1000,
 	IB_FLOW_SPEC_ACTION_DROP        = 0x1001,
+	IB_FLOW_SPEC_ACTION_XFRM	= 0x1002,
 };
 #define IB_FLOW_SPEC_LAYER_MASK	0xF0
 #define IB_FLOW_SPEC_SUPPORT_LAYERS 8
@@ -1975,6 +1976,35 @@ struct ib_flow_attr {
 struct ib_flow {
 	struct ib_qp		*qp;
 	struct ib_uobject	*uobject;
+};
+
+enum ib_action_xfrm_type {
+	IB_ACTION_XFRM_TYPE_UNSPEC,
+	IB_ACTION_XFRM_TYPE_ESP_AES_GCM,
+};
+
+enum ib_action_xfrm_esp_aes_gcm_flags {
+	IB_ACTION_XFRM_ESP_AES_GCM_ESN = 0x1,
+};
+
+struct ib_action_xfrm_esp_aes_gcm_attrs {
+	u32			        key_length;
+	u8			        key[32];
+	u8			        salt[4];
+	u8			        seqiv[8];
+	u8				esn[4];
+	u32				flags; /* Use enum ib_ipsec_flags */
+};
+
+union ib_action_attrs {
+	struct ib_action_xfrm_esp_aes_gcm_attrs	 esp_aes_gcm;
+};
+
+struct ib_action_xfrm {
+	struct ib_device       *device;
+	struct ib_uobject      *uobject;
+	enum ib_action_xfrm_type type;
+	atomic_t		usecnt;
 };
 
 struct ib_mad_hdr;
@@ -2308,6 +2338,12 @@ struct ib_device {
 							   struct ib_rwq_ind_table_init_attr *init_attr,
 							   struct ib_udata *udata);
 	int                        (*destroy_rwq_ind_table)(struct ib_rwq_ind_table *wq_ind_table);
+	struct ib_action_xfrm *	   (*create_action_xfrm)(struct ib_device *device,
+							 enum ib_action_xfrm_type type,
+							 const union ib_action_attrs *attr,
+							 struct ib_udata *udata);
+	int			   (*destroy_action_xfrm)(struct ib_action_xfrm *action);
+
 	/**
 	 * rdma netdev operation
 	 *

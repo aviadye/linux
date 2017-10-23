@@ -307,5 +307,7 @@ IB_UVERBS_DECLARE_EX_CMD(create_rwq_ind_table);
 IB_UVERBS_DECLARE_EX_CMD(destroy_rwq_ind_table);
 IB_UVERBS_DECLARE_EX_CMD(modify_qp);
 IB_UVERBS_DECLARE_EX_CMD(modify_cq);
+IB_UVERBS_DECLARE_EX_CMD(create_action_xfrm);
+IB_UVERBS_DECLARE_EX_CMD(destroy_action_xfrm);
 
 #endif /* UVERBS_H */

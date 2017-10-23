@@ -46,6 +46,7 @@ extern const struct uverbs_object_def uverbs_object_wq;
 extern const struct uverbs_object_def uverbs_object_srq;
 extern const struct uverbs_object_def uverbs_object_ah;
 extern const struct uverbs_object_def uverbs_object_flow;
+extern const struct uverbs_object_def uverbs_object_action_xfrm;
 extern const struct uverbs_object_def uverbs_object_mr;
 extern const struct uverbs_object_def uverbs_object_mw;
 extern const struct uverbs_object_def uverbs_object_pd;

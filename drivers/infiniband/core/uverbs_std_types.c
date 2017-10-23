@@ -50,6 +50,22 @@ static int uverbs_free_flow(struct ib_uobject *uobject,
 	return ib_destroy_flow((struct ib_flow *)uobject->object);
 }
 
+static int uverbs_free_action_xfrm(struct ib_uobject *uobject,
+				   enum rdma_remove_reason why)
+{
+	struct ib_action_xfrm *action = uobject->object;
+
+	if (why == RDMA_REMOVE_DESTROY &&
+	    atomic_read(&action->usecnt))
+		return -EBUSY;
+
+	WARN(atomic_read(&action->usecnt),
+	     "ib_uverbs: Freeing action xfrm while usecnt is %d\n",
+	     atomic_read(&action->usecnt));
+
+	return action->device->destroy_action_xfrm(action);
+}
+
 static int uverbs_free_mw(struct ib_uobject *uobject,
 			  enum rdma_remove_reason why)
 {
@@ -419,6 +435,9 @@ DECLARE_UVERBS_OBJECT(uverbs_object_ah, UVERBS_OBJECT_AH,
 DECLARE_UVERBS_OBJECT(uverbs_object_flow, UVERBS_OBJECT_FLOW,
 		      &UVERBS_TYPE_ALLOC_IDR(0, uverbs_free_flow));
 
+DECLARE_UVERBS_OBJECT(uverbs_object_action_xfrm, UVERBS_OBJECT_ACTION_XFRM,
+		      &UVERBS_TYPE_ALLOC_IDR(0, uverbs_free_action_xfrm));
+
 DECLARE_UVERBS_OBJECT(uverbs_object_wq, UVERBS_OBJECT_WQ,
 		      &UVERBS_TYPE_ALLOC_IDR_SZ(sizeof(struct ib_uwq_object), 0,
 						  uverbs_free_wq));
@@ -448,6 +467,7 @@ DECLARE_UVERBS_OBJECT_TREE(uverbs_default_objects,
 			   &uverbs_object_mw,
 			   &uverbs_object_srq,
 			   &uverbs_object_flow,
+			   &uverbs_object_action_xfrm,
 			   &uverbs_object_wq,
 			   &uverbs_object_rwq_ind_table,
 			   &uverbs_object_xrcd);
