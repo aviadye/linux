@@ -374,3 +374,39 @@ void mlx5_fpga_ipsec_cleanup(struct mlx5_core_dev *mdev)
 	kfree(fdev->ipsec);
 	fdev->ipsec = NULL;
 }
+
+struct mlx5_accel_ipsec_ctx *mlx5_fpga_ipsec_create_xfrm_ctx(struct mlx5_core_dev *mdev,
+							     const struct mlx5_accel_xfrm_ipsec_attrs *attrs,
+							     u32 flags)
+{
+	struct mlx5_accel_ipsec_ctx *ctx;
+
+	if (!(flags & MLX5_ACCEL_XFRM_FLAG_REQUIRE_METADATA)) {
+		mlx5_core_warn(mdev, "Tried to create an esp_aes_gcm action without metadata\n");
+		return ERR_PTR(-EOPNOTSUPP);
+	}
+
+	if (attrs->key_length != 32 &&
+	    attrs->key_length != 16) {
+		pr_err("only 256 and 128 bit aes-gcm keys are supported\n");
+		return ERR_PTR(-EOPNOTSUPP);
+	}
+
+	if (attrs->is_esn) {
+		pr_err("ESN not supported\n");
+		return ERR_PTR(-EOPNOTSUPP);
+	}
+
+	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
+	if (!ctx)
+		return ERR_PTR(-ENOMEM);
+
+	memcpy(&ctx->attrs, attrs, sizeof(ctx->attrs));
+
+	return ctx;
+}
+
+void mlx5_fpga_ipsec_destroy_xfrm_ctx(struct mlx5_accel_ipsec_ctx *ctx)
+{
+	kfree(ctx);
+}

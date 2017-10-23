@@ -31,67 +31,47 @@
  *
  */
 
-#include <linux/mlx5/device.h>
+#ifndef __MLX5_ACCEL_H__
+#define __MLX5_ACCEL_H__
 
-#include "accel/ipsec.h"
-#include "mlx5_core.h"
-#include "fpga/ipsec.h"
+struct mlx5_accel_xfrm_ipsec_attrs {
+	u32			      esn;
+	u8			      key[32];
+	u32			      key_length;
+	u8			      salt[4];
+	u8			      seqiv[8];
+	bool			      is_esn;
+};
 
-void *mlx5_accel_ipsec_sa_cmd_exec(struct mlx5_core_dev *mdev,
-				   struct mlx5_accel_ipsec_sa *cmd)
-{
-	if (!MLX5_IPSEC_DEV(mdev))
-		return ERR_PTR(-EOPNOTSUPP);
+enum {
+	MLX5_ACCEL_XFRM_FLAG_REQUIRE_METADATA = 1UL << 0,
+};
 
-	return mlx5_fpga_ipsec_sa_cmd_exec(mdev, cmd);
-}
+struct mlx5_accel_ipsec_ctx;
+struct mlx5_accel_ipsec_ctx *mlx5_accel_ipsec_create_xfrm_ctx(struct mlx5_core_dev *mdev,
+							      const struct mlx5_accel_xfrm_ipsec_attrs *attrs,
+							      u32 flags);
 
-int mlx5_accel_ipsec_sa_cmd_wait(void *ctx)
-{
-	return mlx5_fpga_ipsec_sa_cmd_wait(ctx);
-}
 
-u32 mlx5_accel_ipsec_device_caps(struct mlx5_core_dev *mdev)
-{
-	return mlx5_fpga_ipsec_device_caps(mdev);
-}
-
-unsigned int mlx5_accel_ipsec_counters_count(struct mlx5_core_dev *mdev)
-{
-	return mlx5_fpga_ipsec_counters_count(mdev);
-}
-
-int mlx5_accel_ipsec_counters_read(struct mlx5_core_dev *mdev, u64 *counters,
-				   unsigned int count)
-{
-	return mlx5_fpga_ipsec_counters_read(mdev, counters, count);
-}
-
-int mlx5_accel_ipsec_init(struct mlx5_core_dev *mdev)
-{
-	return mlx5_fpga_ipsec_init(mdev);
-}
-
-void mlx5_accel_ipsec_cleanup(struct mlx5_core_dev *mdev)
-{
-	mlx5_fpga_ipsec_cleanup(mdev);
-}
+#ifdef CONFIG_MLX5_ACCEL
 
 struct mlx5_accel_ipsec_ctx *mlx5_accel_ipsec_create_xfrm_ctx(struct mlx5_core_dev *mdev,
 							      const struct mlx5_accel_xfrm_ipsec_attrs *attrs,
-							      u32 flags)
+							      u32 flags);
+void mlx5_accel_ipsec_destroy_xfrm_ctx(struct mlx5_accel_ipsec_ctx *ctx);
+
+#else
+
+static inline struct mlx5_accel_ipsec_ctx *mlx5_accel_ipsec_create_xfrm_ctx(struct mlx5_core_dev *mdev,
+									    const struct mlx5_accel_xfrm_ipsec_attrs *attrs,
+									    u32 flags)
 {
-	struct mlx5_accel_ipsec_ctx *ctx;
-
-	ctx = mlx5_fpga_ipsec_create_xfrm_ctx(mdev, attrs, flags);
-	if (IS_ERR(ctx))
-		return ctx;
-
-	ctx->mdev = mdev;
-	return ctx;
+	return ERR_PTR(-EOPNOTSUPP);
 }
 
 void mlx5_accel_ipsec_destroy_xfrm_ctx(struct mlx5_accel_ipsec_ctx *ctx)
 {
-	mlx5_fpga_ipsec_destroy_xfrm_ctx(ctx);
 }
+
+#endif
+#endif

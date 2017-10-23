@@ -60,6 +60,7 @@
 #include "mlx5_ib.h"
 #include "cmd.h"
 #include <linux/mlx5/vport.h>
+#include <linux/mlx5/accel.h>
 
 #define DRIVER_NAME "mlx5_ib"
 #define DRIVER_VERSION "5.0-0"
@@ -2722,6 +2723,106 @@ unlock:
 	return ERR_PTR(err);
 }
 
+static u32 mlx5_ib_action_xfrm_flags_to_accel_flags(u32 mlx5_flags)
+{
+	u32 flags = 0;
+
+	if (mlx5_flags & MLX5_IB_XFRM_FLAGS_REQUIRE_METADATA)
+		flags |= MLX5_ACCEL_XFRM_FLAG_REQUIRE_METADATA;
+
+	return flags;
+}
+
+static struct ib_action_xfrm *mlx5_ib_create_action_xfrm(struct ib_device *device,
+							 enum ib_action_xfrm_type type,
+							 const union ib_action_attrs *attr,
+							 struct ib_udata *udata)
+{
+	struct mlx5_ib_dev *mdev = to_mdev(device);
+	struct mlx5_ib_action_xfrm *action;
+	struct mlx5_ib_create_action_xfrm cmd = {};
+	struct mlx5_ib_create_action_xfrm_resp resp = {};
+	size_t min_resp_sz =
+		offsetof(typeof(resp), reserved) + sizeof(resp.reserved);
+	int err = 0;
+
+	if (udata && udata->inlen > sizeof(cmd) &&
+	    !ib_is_udata_cleared(udata, sizeof(cmd), udata->inlen))
+		return ERR_PTR(-EOPNOTSUPP);
+
+	if (udata && udata->outlen && udata->outlen < min_resp_sz)
+		return ERR_PTR(-EOPNOTSUPP);
+
+	if (udata) {
+		err = ib_copy_from_udata(&cmd, udata,
+					 min(udata->inlen, sizeof(cmd)));
+		if (err)
+			return ERR_PTR(err);
+	}
+
+	if (cmd.comp_mask || cmd.xfrm_flags >= MLX5_IB_XFRM_FLAGS_RESERVED)
+		return ERR_PTR(-EOPNOTSUPP);
+
+	action = kmalloc(sizeof(*action), GFP_KERNEL);
+
+	if (!action)
+		return ERR_PTR(-ENOMEM);
+
+	switch (type) {
+	case IB_ACTION_XFRM_TYPE_ESP_AES_GCM: {
+		u32 flags = mlx5_ib_action_xfrm_flags_to_accel_flags(cmd.xfrm_flags);
+		struct mlx5_accel_xfrm_ipsec_attrs attrs;
+
+		memcpy(&attrs.esn, &attr->esp_aes_gcm.esn, sizeof(attrs.esn));
+		memcpy(&attrs.key, &attr->esp_aes_gcm.key, sizeof(attrs.key));
+		attrs.key_length = attr->esp_aes_gcm.key_length;
+		memcpy(&attrs.salt, &attr->esp_aes_gcm.salt, sizeof(attrs.salt));
+		memcpy(&attrs.seqiv, &attr->esp_aes_gcm.seqiv, sizeof(attrs.seqiv));
+		attrs.is_esn =
+			!!(attr->esp_aes_gcm.flags & IB_ACTION_XFRM_ESP_AES_GCM_ESN);
+		action->esp_aes_gcm.ctx = mlx5_accel_ipsec_create_xfrm_ctx(mdev->mdev, &attrs, flags);
+		if (IS_ERR(action->esp_aes_gcm.ctx))
+			err = PTR_ERR(action->esp_aes_gcm.ctx);
+		break;
+		}
+	default:
+		err = -EOPNOTSUPP;
+	};
+
+	if (err)
+		goto err_parse;
+
+	if (udata && udata->outlen) {
+		resp.response_length = min_resp_sz;
+		err = ib_copy_to_udata(udata, &resp, resp.response_length);
+		if (err)
+			goto err_parse;
+	}
+
+	return &action->ib_action;
+
+err_parse:
+	kfree(action);
+	return ERR_PTR(err);
+}
+
+static int mlx5_ib_destroy_action_xfrm(struct ib_action_xfrm *action)
+{
+	struct mlx5_ib_action_xfrm *maction = to_mact_xfrm(action);
+
+	switch (action->type) {
+	case IB_ACTION_XFRM_TYPE_ESP_AES_GCM:
+		 mlx5_accel_ipsec_destroy_xfrm_ctx(maction->esp_aes_gcm.ctx);
+		 break;
+	default:
+		 WARN_ON(true);
+		 break;
+	}
+
+	kfree(maction);
+	return 0;
+}
+
 static int mlx5_ib_mcg_attach(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
 {
 	struct mlx5_ib_dev *dev = to_mdev(ibqp->device);
@@ -4119,6 +4220,11 @@ static void *mlx5_ib_add(struct mlx5_core_dev *mdev)
 	dev->ib_dev.uverbs_ex_cmd_mask |=
 			(1ull << IB_USER_VERBS_EX_CMD_CREATE_FLOW) |
 			(1ull << IB_USER_VERBS_EX_CMD_DESTROY_FLOW);
+	dev->ib_dev.create_action_xfrm = mlx5_ib_create_action_xfrm;
+	dev->ib_dev.destroy_action_xfrm = mlx5_ib_destroy_action_xfrm;
+	dev->ib_dev.uverbs_ex_cmd_mask |=
+			(1ull << IB_USER_VERBS_EX_CMD_CREATE_ACTION_XFRM) |
+			(1ull << IB_USER_VERBS_EX_CMD_DESTROY_ACTION_XFRM);
 
 	if (mlx5_ib_port_link_layer(&dev->ib_dev, 1) ==
 	    IB_LINK_LAYER_ETHERNET) {

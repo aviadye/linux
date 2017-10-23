@@ -50,6 +50,11 @@ int mlx5_fpga_ipsec_counters_read(struct mlx5_core_dev *mdev, u64 *counters,
 int mlx5_fpga_ipsec_init(struct mlx5_core_dev *mdev);
 void mlx5_fpga_ipsec_cleanup(struct mlx5_core_dev *mdev);
 
+struct mlx5_accel_ipsec_ctx *mlx5_fpga_ipsec_create_xfrm_ctx(struct mlx5_core_dev *mdev,
+							     const struct mlx5_accel_xfrm_ipsec_attrs *attrs,
+							     u32 flags);
+void mlx5_fpga_ipsec_destroy_xfrm_ctx(struct mlx5_accel_ipsec_ctx *ctx);
+
 #else
 
 static inline void *mlx5_fpga_ipsec_sa_cmd_exec(struct mlx5_core_dev *mdev,
@@ -86,6 +91,17 @@ static inline int mlx5_fpga_ipsec_init(struct mlx5_core_dev *mdev)
 }
 
 static inline void mlx5_fpga_ipsec_cleanup(struct mlx5_core_dev *mdev)
+{
+}
+
+static inline struct mlx5_accel_ipsec_ctx *mlx5_fpga_ipsec_create_xfrm_ctx(struct mlx5_core_dev *mdev,
+									   const struct mlx5_accel_xfrm_ipsec_attrs *attrs,
+									   u32 flags)
+{
+	return PTR_ERR(-EOPNOTSUPP);
+}
+
+void mlx5_fpga_ipsec_destroy_xfrm_ctx(struct mlx5_accel_ipsec_ctx *ctx)
 {
 }
 

@@ -366,4 +366,20 @@ struct mlx5_ib_modify_wq {
 	__u32	comp_mask;
 	__u32	reserved;
 };
+
+enum mlx5_ib_xfrm_flags {
+	MLX5_IB_XFRM_FLAGS_REQUIRE_METADATA	= 1 << 0,
+	MLX5_IB_XFRM_FLAGS_RESERVED		= 1 << 1,
+};
+
+struct mlx5_ib_create_action_xfrm {
+	__u32			comp_mask;
+	__u32			xfrm_flags;
+};
+
+struct mlx5_ib_create_action_xfrm_resp {
+	__u32			response_length;
+	__u32			reserved;
+};
+
 #endif /* MLX5_ABI_USER_H */

@@ -37,6 +37,7 @@
 #ifdef CONFIG_MLX5_ACCEL
 
 #include <linux/mlx5/driver.h>
+#include <linux/mlx5/accel.h>
 
 enum {
 	MLX5_ACCEL_IPSEC_DEVICE = BIT(1),
@@ -91,6 +92,11 @@ struct mlx5_accel_ipsec_sa {
 	u8 flags;
 	u8 reserved[2];
 } __packed;
+
+struct mlx5_accel_ipsec_ctx {
+	struct mlx5_core_dev			*mdev;
+	struct mlx5_accel_xfrm_ipsec_attrs	attrs;
+};
 
 /**
  * mlx5_accel_ipsec_sa_cmd_exec - Execute an IPSec SADB command
