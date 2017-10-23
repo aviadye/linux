@@ -65,6 +65,7 @@
 #include <uapi/rdma/ib_user_verbs.h>
 #include <rdma/restrack.h>
 #include <uapi/rdma/rdma_user_ioctl.h>
+#include <uapi/rdma/ib_user_ioctl_verbs.h>
 
 #define IB_FW_VERSION_NAME_MAX	ETHTOOL_FWVERS_LEN
 
@@ -1996,6 +1997,70 @@ struct ib_flow {
 	struct ib_uobject	*uobject;
 };
 
+enum ib_flow_action_type {
+	IB_FLOW_ACTION_UNSPECIFIED,
+	IB_FLOW_ACTION_ESP = 1,
+};
+
+struct ib_flow_action_attrs_esp_keymat {
+	enum uverbs_flow_action_esp_keymat		protocol;
+} __aligned(__alignof__(u64));
+
+struct ib_flow_action_attrs_esp_keymat_aes_gcm {
+	struct ib_flow_action_attrs_esp_keymat			keymat;
+	struct ib_uverbs_flow_action_esp_keymat_aes_gcm		attrs;
+};
+
+union ib_flow_action_attrs_esp_keymats {
+	struct ib_flow_action_attrs_esp_keymat		keymat;
+	struct ib_flow_action_attrs_esp_keymat_aes_gcm	aes_gcm;
+};
+
+struct ib_flow_action_attrs_esp_replay {
+	enum uverbs_flow_action_esp_replay		protocol;
+} __aligned(__alignof__(u64));
+
+struct ib_flow_action_attrs_esp_replay_bmp {
+	struct ib_flow_action_attrs_esp_replay		replay;
+	struct ib_uverbs_flow_action_esp_replay_bmp	attrs;
+};
+
+union ib_flow_action_attrs_esp_replays {
+	struct ib_flow_action_attrs_esp_replay		replay;
+	struct ib_flow_action_attrs_esp_replay_bmp	bmp;
+};
+
+enum ib_flow_action_attrs_esp_flags {
+	/* All user-space flags at the top: Use enum ib_uverbs_flow_action_esp_flags*/
+
+	/* Kernel flags */
+	IB_FLOW_ACTION_ESP_FLAGS_ESN_TRIGGERED	= 1ULL << 32,
+};
+
+struct ib_flow_spec_list {
+	struct ib_flow_spec_list	*next;
+	union ib_flow_spec		spec;
+};
+
+struct ib_flow_action_attrs_esp {
+	struct ib_flow_action_attrs_esp_keymat		*keymat;
+	struct ib_flow_action_attrs_esp_replay		*replay;
+	struct ib_flow_spec_list			*encap;
+	u32						esn;
+	u32						spi;
+	u32						seq;
+	u32						tfc_pad;
+	u64						flags;
+	u64						hard_limit_pkts;
+};
+
+struct ib_flow_action {
+	struct ib_device		*device;
+	struct ib_uobject		*uobject;
+	enum ib_flow_action_type	type;
+	atomic_t			usecnt;
+};
+
 struct ib_mad_hdr;
 struct ib_grh;
 
@@ -2071,6 +2136,8 @@ struct ib_port_pkey_list {
 	spinlock_t                    list_lock;
 	struct list_head              pkey_list;
 };
+
+struct uverbs_attr_bundle;
 
 struct ib_device {
 	/* Do not access @dma_device directly from ULP nor from HW drivers. */
@@ -2327,6 +2394,12 @@ struct ib_device {
 							   struct ib_rwq_ind_table_init_attr *init_attr,
 							   struct ib_udata *udata);
 	int                        (*destroy_rwq_ind_table)(struct ib_rwq_ind_table *wq_ind_table);
+	struct ib_flow_action *	   (*create_flow_action_esp)(struct ib_device *device,
+							     enum ib_flow_action_type type,
+							     const struct ib_flow_action_attrs_esp *attr,
+							     struct uverbs_attr_bundle *attrs);
+	int			   (*destroy_flow_action)(struct ib_flow_action *action);
+
 	/**
 	 * rdma netdev operation
 	 *

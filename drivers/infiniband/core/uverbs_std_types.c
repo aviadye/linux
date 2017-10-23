@@ -51,6 +51,22 @@ static int uverbs_free_flow(struct ib_uobject *uobject,
 	return ib_destroy_flow((struct ib_flow *)uobject->object);
 }
 
+static int uverbs_free_flow_action(struct ib_uobject *uobject,
+				   enum rdma_remove_reason why)
+{
+	struct ib_flow_action *action = uobject->object;
+
+	if (why == RDMA_REMOVE_DESTROY &&
+	    atomic_read(&action->usecnt))
+		return -EBUSY;
+
+	WARN(atomic_read(&action->usecnt),
+	     "ib_uverbs: Freeing action xfrm while usecnt is %d\n",
+	     atomic_read(&action->usecnt));
+
+	return action->device->destroy_flow_action(action);
+}
+
 static int uverbs_free_mw(struct ib_uobject *uobject,
 			  enum rdma_remove_reason why)
 {
@@ -259,6 +275,13 @@ static void create_udata(struct uverbs_attr_bundle *ctx,
 	}
 }
 
+static int uverbs_destroy_def_handler(struct ib_device *ib_dev,
+				      struct ib_uverbs_file *file,
+				      struct uverbs_attr_bundle *attrs)
+{
+	return 0;
+}
+
 static int UVERBS_HANDLER(UVERBS_CQ_CREATE)(struct ib_device *ib_dev,
 					    struct ib_uverbs_file *file,
 					    struct uverbs_attr_bundle *attrs)
@@ -393,6 +416,275 @@ static DECLARE_COMMON_METHOD(UVERBS_CQ_DESTROY,
 	&UVERBS_ATTR_PTR_OUT(DESTROY_CQ_RESP, struct ib_uverbs_destroy_cq_resp,
 			     UA_FLAGS(UVERBS_ATTR_SPEC_F_MANDATORY)));
 
+static u64 esp_flags_uverbs_to_verbs(struct uverbs_attr_bundle *attrs,
+				     u32 flags)
+{
+	u64 verbs_flags = flags;
+
+	if (uverbs_attr_is_valid(attrs, FLOW_ACTION_ESP_ESN))
+		verbs_flags |= IB_FLOW_ACTION_ESP_FLAGS_ESN_TRIGGERED;
+
+	return verbs_flags;
+};
+
+#define ACTION_CHECK_INVALID_ATTRS(_attrs, _last)	((_attrs) & ~(((_last) << 1) - 1))
+#define ESP_AES_GCM_LAST_SUPPORTED_IV_ALGO		IB_UVERBS_FLOW_ACTION_IV_ALGO_SEQ
+
+static int flow_action_esp_keymat_aes_gcm(union ib_flow_action_attrs_esp_keymats *keymat)
+{
+	struct ib_flow_action_attrs_esp_keymat_aes_gcm *aes_gcm =
+		&keymat->aes_gcm;
+
+	if (aes_gcm->attrs.iv_algo > ESP_AES_GCM_LAST_SUPPORTED_IV_ALGO)
+		return -EOPNOTSUPP;
+
+	if (aes_gcm->attrs.key_len != 32 &&
+	    aes_gcm->attrs.key_len != 24 &&
+	    aes_gcm->attrs.key_len != 16)
+		return -EINVAL;
+
+	if (aes_gcm->attrs.icv_len != 16 &&
+	    aes_gcm->attrs.icv_len != 8 &&
+	    aes_gcm->attrs.icv_len != 12)
+		return -EINVAL;
+
+	return 0;
+}
+
+static int (*flow_action_esp_keymat_validate[])(union ib_flow_action_attrs_esp_keymats *keymat) = {
+	[FLOW_ACTION_ESP_KEYMAT_AES_GCM] = flow_action_esp_keymat_aes_gcm,
+};
+
+static int parse_esp_ip(enum ib_flow_spec_type proto,
+			const void __user *mask_ptr, const void __user *val_ptr,
+			size_t len, union ib_flow_spec *out)
+{
+	int ret;
+	union {
+		struct ib_uverbs_flow_ipv4_filter ipv4;
+		struct ib_uverbs_flow_ipv6_filter ipv6;
+	} user_mask = {};
+	union {
+		struct ib_uverbs_flow_ipv4_filter ipv4;
+		struct ib_uverbs_flow_ipv6_filter ipv6;
+	} user_val = {};
+
+	switch (proto) {
+	case IB_FLOW_SPEC_IPV4:
+		if (len > sizeof(user_mask.ipv4) &&
+		    !ib_is_buffer_cleared(mask_ptr + sizeof(user_mask.ipv4),
+					  len - sizeof(user_mask.ipv4)))
+			return -EOPNOTSUPP;
+
+		ret = copy_from_user(&user_mask.ipv4, mask_ptr,
+				     min_t(size_t, len,
+					   sizeof(user_mask.ipv4)));
+		ret = ret ?: copy_from_user(&user_val.ipv4, val_ptr,
+					    min_t(size_t, len,
+						  sizeof(user_val.ipv4)));
+		if (ret)
+			return -EFAULT;
+		break;
+	case IB_FLOW_SPEC_IPV6:
+		if (len > sizeof(user_mask.ipv6) &&
+		    !ib_is_buffer_cleared(mask_ptr + sizeof(user_mask.ipv6),
+					  len - sizeof(user_mask.ipv6)))
+			return -EOPNOTSUPP;
+
+		ret = copy_from_user(&user_mask.ipv6, mask_ptr,
+				     min_t(size_t, len,
+					   sizeof(user_mask.ipv6)));
+		ret = ret ?: copy_from_user(&user_val.ipv6, val_ptr,
+					    min_t(size_t, len,
+						  sizeof(user_val.ipv6)));
+		if (ret)
+			return -EFAULT;
+		break;
+	default:
+		return -EOPNOTSUPP;
+	}
+
+	return _kern_spec_to_ib_spec_filter(proto, &user_mask, &user_val,
+					    len, out);
+}
+
+static int flow_action_esp_get_encap(struct ib_flow_spec_list *out,
+				     struct uverbs_attr_bundle *attrs)
+{
+	struct ib_uverbs_flow_action_esp_encap uverbs_encap;
+	int ret;
+
+	ret = uverbs_copy_from(&uverbs_encap, attrs,
+			       FLOW_ACTION_ESP_ENCAP);
+	if (ret)
+		return ret;
+
+	/* We currently support only one encap */
+	if (uverbs_encap.next_ptr)
+		return -EOPNOTSUPP;
+
+	if (uverbs_encap.type != IB_FLOW_SPEC_IPV4 &&
+	    uverbs_encap.type != IB_FLOW_SPEC_IPV6)
+		return -EOPNOTSUPP;
+
+	return parse_esp_ip(uverbs_encap.type,
+			    (__force const void __user *)uverbs_encap.mask_ptr,
+			    (__force const void __user *)uverbs_encap.val_ptr,
+			    uverbs_encap.len,
+			    &out->spec);
+}
+
+struct ib_flow_action_esp_attr {
+	struct	ib_flow_action_attrs_esp		hdr;
+	union	ib_flow_action_attrs_esp_keymats	keymat;
+	union	ib_flow_action_attrs_esp_replays	replay;
+	/* We currently support only one spec */
+	struct	ib_flow_spec_list			encap;
+};
+
+#define ESP_LAST_SUPPORTED_FLAG		IB_UVERBS_FLOW_ACTION_ESP_FLAGS_ESN_NEW_WINDOW
+static int parse_flow_action_esp(struct ib_device *ib_dev,
+				 struct ib_uverbs_file *file,
+				 struct uverbs_attr_bundle *attrs,
+				 struct ib_flow_action_esp_attr *esp_attr)
+{
+	struct ib_uverbs_flow_action_esp uverbs_esp = {};
+	int ret;
+
+	/* Optional param, if it doesn't exist, we get -ENOENT and skip it */
+	ret = uverbs_copy_from(&esp_attr->hdr.esn, attrs,
+			       FLOW_ACTION_ESP_ESN);
+	if (IS_UVERBS_COPY_ERR(ret))
+		return ret;
+
+	if (uverbs_attr_is_valid(attrs, FLOW_ACTION_ESP_ATTRS)) {
+		ret = uverbs_copy_from(&uverbs_esp, attrs, FLOW_ACTION_ESP_ATTRS);
+		if (ret)
+			return ret;
+
+		if (uverbs_esp.flags & ~((ESP_LAST_SUPPORTED_FLAG << 1) - 1))
+			return -EOPNOTSUPP;
+
+		esp_attr->hdr.spi = uverbs_esp.spi;
+		esp_attr->hdr.seq = uverbs_esp.seq;
+		esp_attr->hdr.tfc_pad = uverbs_esp.tfc_pad;
+		esp_attr->hdr.flags = uverbs_esp.flags;
+		esp_attr->hdr.hard_limit_pkts = uverbs_esp.hard_limit_pkts;
+	}
+	esp_attr->hdr.flags = esp_flags_uverbs_to_verbs(attrs, uverbs_esp.flags);
+
+	if (uverbs_attr_is_valid(attrs, FLOW_ACTION_ESP_KEYMAT)) {
+		esp_attr->keymat.keymat.protocol =
+			uverbs_attr_get_enum_id(attrs, FLOW_ACTION_ESP_KEYMAT);
+		ret = _uverbs_copy_from(&esp_attr->keymat.keymat + 1, attrs,
+					FLOW_ACTION_ESP_KEYMAT,
+					sizeof(esp_attr->keymat));
+		if (ret)
+			return ret;
+
+		ret = flow_action_esp_keymat_validate[esp_attr->keymat.keymat.protocol](&esp_attr->keymat);
+		if (ret)
+			return ret;
+
+		esp_attr->hdr.keymat = &esp_attr->keymat.keymat;
+	}
+
+	if (uverbs_attr_is_valid(attrs, FLOW_ACTION_ESP_REPLAY)) {
+		ret = _uverbs_copy_from(&esp_attr->replay.replay + 1, attrs,
+					FLOW_ACTION_ESP_REPLAY,
+					sizeof(esp_attr->replay));
+		if (ret)
+			return ret;
+
+		esp_attr->replay.replay.protocol =
+			uverbs_attr_get_enum_id(attrs, FLOW_ACTION_ESP_REPLAY);
+
+		esp_attr->hdr.replay = &esp_attr->replay.replay;
+	}
+
+	ret = flow_action_esp_get_encap(&esp_attr->encap, attrs);
+	if (!ret)
+		esp_attr->hdr.encap = &esp_attr->encap;
+	else if (ret != -ENOENT)
+		return ret;
+
+	return 0;
+}
+
+static int UVERBS_HANDLER(UVERBS_FLOW_ACTION_ESP_CREATE)(struct ib_device *ib_dev,
+							 struct ib_uverbs_file *file,
+							 struct uverbs_attr_bundle *attrs)
+{
+	int				  ret;
+	struct ib_uobject		  *uobj;
+	struct ib_flow_action		  *action;
+	struct ib_flow_action_esp_attr	  esp_attr = {};
+
+	if (!ib_dev->create_flow_action_esp)
+		return -EOPNOTSUPP;
+
+	ret = parse_flow_action_esp(ib_dev, file, attrs, &esp_attr);
+	if (ret)
+		return ret;
+
+	uobj = uverbs_attr_get(attrs, FLOW_ACTION_ESP_HANDLE)->obj_attr.uobject;
+	action = ib_dev->create_flow_action_esp(ib_dev, IB_FLOW_ACTION_ESP,
+						&esp_attr.hdr,
+						attrs);
+	if (IS_ERR(action))
+		return PTR_ERR(action);
+
+	atomic_set(&action->usecnt, 0);
+	action->device = ib_dev;
+	action->type = IB_FLOW_ACTION_ESP;
+	action->uobject = uobj;
+	uobj->object = action;
+
+	return 0;
+}
+
+static struct uverbs_attr_spec uverbs_flow_action_esp_keymat[] = {
+	[FLOW_ACTION_ESP_KEYMAT_AES_GCM] = {
+		.ptr = {
+			.type = UVERBS_ATTR_TYPE_PTR_IN,
+			.len = sizeof(struct ib_uverbs_flow_action_esp_keymat_aes_gcm),
+			.flags = UVERBS_ATTR_SPEC_F_MIN_SZ_OR_ZERO,
+		},
+	},
+};
+
+static struct uverbs_attr_spec uverbs_flow_action_esp_replay[] = {
+	[FLOW_ACTION_ESP_REPLAY_BMP] = {
+		.ptr = {
+			.type = UVERBS_ATTR_TYPE_PTR_IN,
+			.len = sizeof(struct ib_uverbs_flow_action_esp_replay_bmp),
+			.flags = UVERBS_ATTR_SPEC_F_MIN_SZ_OR_ZERO,
+		}
+	},
+};
+
+static DECLARE_COMMON_METHOD(UVERBS_FLOW_ACTION_ESP_CREATE,
+	&UVERBS_ATTR_IDR(FLOW_ACTION_ESP_HANDLE, UVERBS_OBJECT_FLOW_ACTION,
+			 UVERBS_ACCESS_NEW,
+			 UA_FLAGS(UVERBS_ATTR_SPEC_F_MANDATORY)),
+	&UVERBS_ATTR_PTR_IN(FLOW_ACTION_ESP_ATTRS,
+			    struct ib_uverbs_flow_action_esp,
+			    UA_FLAGS(UVERBS_ATTR_SPEC_F_MANDATORY |
+				     UVERBS_ATTR_SPEC_F_MIN_SZ_OR_ZERO)),
+	&UVERBS_ATTR_PTR_IN(FLOW_ACTION_ESP_ESN, __u32),
+	&UVERBS_ATTR_ENUM_IN(FLOW_ACTION_ESP_KEYMAT, uverbs_flow_action_esp_keymat,
+			     UA_FLAGS(UVERBS_ATTR_SPEC_F_MANDATORY)),
+	&UVERBS_ATTR_ENUM_IN(FLOW_ACTION_ESP_REPLAY,
+			     uverbs_flow_action_esp_replay),
+	&UVERBS_ATTR_PTR_IN(FLOW_ACTION_ESP_ENCAP,
+			    struct ib_uverbs_flow_action_esp_encap));
+
+static DECLARE_UVERBS_METHOD(UVERBS_METHOD(UVERBS_FLOW_ACTION_DESTROY),
+	UVERBS_FLOW_ACTION_DESTROY, uverbs_destroy_def_handler,
+	&UVERBS_ATTR_IDR(DESTROY_FLOW_ACTION_HANDLE, UVERBS_OBJECT_FLOW_ACTION,
+			UVERBS_ACCESS_DESTROY,
+			UA_FLAGS(UVERBS_ATTR_SPEC_F_MANDATORY)));
+
 DECLARE_COMMON_OBJECT(UVERBS_OBJECT_COMP_CHANNEL,
 		      &UVERBS_TYPE_ALLOC_FD(0,
 					      sizeof(struct ib_uverbs_completion_event_file),
@@ -427,6 +719,11 @@ DECLARE_COMMON_OBJECT(UVERBS_OBJECT_AH,
 DECLARE_COMMON_OBJECT(UVERBS_OBJECT_FLOW,
 		      &UVERBS_TYPE_ALLOC_IDR(0, uverbs_free_flow));
 
+DECLARE_COMMON_OBJECT(UVERBS_OBJECT_FLOW_ACTION,
+		      &UVERBS_TYPE_ALLOC_IDR(0, uverbs_free_flow_action),
+		      &UVERBS_METHOD(UVERBS_FLOW_ACTION_ESP_CREATE),
+		      &UVERBS_METHOD(UVERBS_FLOW_ACTION_DESTROY));
+
 DECLARE_COMMON_OBJECT(UVERBS_OBJECT_WQ,
 		      &UVERBS_TYPE_ALLOC_IDR_SZ(sizeof(struct ib_uwq_object), 0,
 						  uverbs_free_wq));
@@ -457,4 +754,5 @@ DECLARE_UVERBS_OBJECT_TREE(uverbs_default_objects,
 			   &UVERBS_OBJECT(UVERBS_OBJECT_FLOW),
 			   &UVERBS_OBJECT(UVERBS_OBJECT_WQ),
 			   &UVERBS_OBJECT(UVERBS_OBJECT_RWQ_IND_TBL),
-			   &UVERBS_OBJECT(UVERBS_OBJECT_XRCD));
+			   &UVERBS_OBJECT(UVERBS_OBJECT_XRCD),
+			   &UVERBS_OBJECT(UVERBS_OBJECT_FLOW_ACTION));

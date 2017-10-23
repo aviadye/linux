@@ -49,6 +49,7 @@ enum uverbs_default_objects {
 	UVERBS_OBJECT_MR,
 	UVERBS_OBJECT_MW,
 	UVERBS_OBJECT_FLOW,
+	UVERBS_OBJECT_FLOW_ACTION,
 	UVERBS_OBJECT_XRCD,
 	UVERBS_OBJECT_RWQ_IND_TBL,
 	UVERBS_OBJECT_WQ,
@@ -75,9 +76,84 @@ enum uverbs_destroy_cq_cmd_attr_ids {
 	DESTROY_CQ_RESP,
 };
 
+enum uverbs_flow_action_esp_keymat {
+	FLOW_ACTION_ESP_KEYMAT_AES_GCM,
+};
+
+enum ib_uverbs_flow_action_esp_aes_gcm_keymat_iv_algo {
+	IB_UVERBS_FLOW_ACTION_IV_ALGO_SEQ,
+};
+
+struct ib_uverbs_flow_action_esp_keymat_aes_gcm {
+	__u64	iv;
+	__u32	iv_algo; /* Use enum ib_uverbs_flow_action_iv_algo */
+
+	__u32   salt;
+	__u32	icv_len;
+
+	__u32	key_len;
+	__u32   aes_key[256 / 32];
+};
+
+enum uverbs_flow_action_esp_replay {
+	FLOW_ACTION_ESP_REPLAY_NONE,
+	FLOW_ACTION_ESP_REPLAY_BMP,
+};
+
+struct ib_uverbs_flow_action_esp_replay_bmp {
+	__u32	size;
+};
+
+enum uverbs_create_flow_action_esp {
+	FLOW_ACTION_ESP_HANDLE,
+	FLOW_ACTION_ESP_ATTRS,
+	FLOW_ACTION_ESP_ESN,
+	FLOW_ACTION_ESP_KEYMAT,
+	FLOW_ACTION_ESP_REPLAY,
+	FLOW_ACTION_ESP_ENCAP,
+};
+
+enum uverbs_destroy_flow_action_esp {
+	DESTROY_FLOW_ACTION_HANDLE,
+};
+
 enum uverbs_actions_cq_ops {
 	UVERBS_CQ_CREATE,
 	UVERBS_CQ_DESTROY,
+};
+
+enum uverbs_actions_flow_action_ops {
+	UVERBS_FLOW_ACTION_ESP_CREATE,
+	UVERBS_FLOW_ACTION_DESTROY,
+};
+
+enum ib_uverbs_flow_action_esp_flags {
+	IB_UVERBS_FLOW_ACTION_ESP_FLAGS_INLINE_CRYPTO	= 0,	/* Default */
+	IB_UVERBS_FLOW_ACTION_ESP_FLAGS_FULL_OFFLAOD	= 1UL << 0,
+
+	IB_UVERBS_FLOW_ACTION_ESP_FLAGS_TUNNEL		= 0,	/* Default */
+	IB_UVERBS_FLOW_ACTION_ESP_FLAGS_TRANSPORT	= 1UL << 1,
+
+	IB_UVERBS_FLOW_ACTION_ESP_FLAGS_DECRYPT		= 0,	/* Default */
+	IB_UVERBS_FLOW_ACTION_ESP_FLAGS_ENCRYPT		= 1UL << 2,
+
+	IB_UVERBS_FLOW_ACTION_ESP_FLAGS_ESN_NEW_WINDOW	= 1UL << 3,
+};
+
+struct ib_uverbs_flow_action_esp_encap {
+	__u64	mask_ptr;	/* pointer to struct ib_uverbs_flow_xxxx_filter */
+	__u64	val_ptr;	/* pointer to struct ib_uverbs_flow_xxxx_filter */
+	__u64	next_ptr;	/* pointer to struct ib_uverbs_flow_action_esp_encap or NULL */
+	__u16	len;		/* Len of mask and pointer (separately) */
+	__u16	type;		/* Use flow_spec enum */
+};
+
+struct ib_uverbs_flow_action_esp {
+	__u32	spi;
+	__u32	seq;
+	__u32	tfc_pad;
+	__u32	flags;
+	__u64	hard_limit_pkts;
 };
 
 #endif
