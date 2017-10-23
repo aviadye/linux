@@ -1945,6 +1945,12 @@ struct ib_flow_spec_action_drop {
 	u16			      size;
 };
 
+struct ib_flow_spec_action_xfrm {
+	enum ib_flow_spec_type	      type;
+	u16			      size;
+	struct ib_action_xfrm	     *act;
+};
+
 union ib_flow_spec {
 	struct {
 		u32			type;
@@ -1958,6 +1964,7 @@ union ib_flow_spec {
 	struct ib_flow_spec_tunnel      tunnel;
 	struct ib_flow_spec_action_tag  flow_tag;
 	struct ib_flow_spec_action_drop drop;
+	struct ib_flow_spec_action_xfrm	xfrm;
 };
 
 struct ib_flow_attr {

@@ -47,7 +47,16 @@ static int uverbs_free_ah(struct ib_uobject *uobject,
 static int uverbs_free_flow(struct ib_uobject *uobject,
 			    enum rdma_remove_reason why)
 {
-	return ib_destroy_flow((struct ib_flow *)uobject->object);
+	int ret;
+	struct ib_flow *flow = (struct ib_flow *)uobject->object;
+	struct ib_uflow_object *uflow =
+		container_of(uobject, struct ib_uflow_object, uobject);
+
+	ret = ib_destroy_flow(flow);
+	if (!ret)
+		ib_uverbs_flow_resources_free(uflow->resources);
+
+	return ret;
 }
 
 static int uverbs_free_action_xfrm(struct ib_uobject *uobject,
@@ -433,7 +442,8 @@ DECLARE_UVERBS_OBJECT(uverbs_object_ah, UVERBS_OBJECT_AH,
 		      &UVERBS_TYPE_ALLOC_IDR(0, uverbs_free_ah));
 
 DECLARE_UVERBS_OBJECT(uverbs_object_flow, UVERBS_OBJECT_FLOW,
-		      &UVERBS_TYPE_ALLOC_IDR(0, uverbs_free_flow));
+		      &UVERBS_TYPE_ALLOC_IDR_SZ(sizeof(struct ib_uflow_object),
+						0, uverbs_free_flow));
 
 DECLARE_UVERBS_OBJECT(uverbs_object_action_xfrm, UVERBS_OBJECT_ACTION_XFRM,
 		      &UVERBS_TYPE_ALLOC_IDR(0, uverbs_free_action_xfrm));
