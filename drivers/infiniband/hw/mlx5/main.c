@@ -3117,6 +3117,19 @@ err_parse:
 	return ERR_PTR(err);
 }
 
+static int mlx5_ib_modify_flow_action_esp(struct ib_flow_action *action,
+					  const struct ib_flow_action_attrs_esp *attr,
+					  struct uverbs_attr_bundle *attrs)
+{
+	struct mlx5_ib_dev *dev = to_mdev(action->device);
+	int err = 0;
+
+	pr_info("mlx5_ib: in modify flow action\n");
+	/* TODO: Do something userful here */
+
+	return err;
+}
+
 static int mlx5_ib_destroy_flow_action(struct ib_flow_action *action)
 {
 	struct mlx5_ib_flow_action *maction = to_mflow_act(action);
@@ -4816,6 +4829,7 @@ static int mlx5_ib_stage_caps_init(struct mlx5_ib_dev *dev)
 			(1ull << IB_USER_VERBS_EX_CMD_DESTROY_FLOW);
 	dev->ib_dev.create_flow_action_esp = mlx5_ib_create_flow_action_esp;
 	dev->ib_dev.destroy_flow_action = mlx5_ib_destroy_flow_action;
+	dev->ib_dev.modify_flow_action_esp = mlx5_ib_modify_flow_action_esp;
 	dev->ib_dev.driver_id = RDMA_DRIVER_MLX5;
 
 	err = init_node_data(dev);
