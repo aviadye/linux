@@ -2916,6 +2916,39 @@ err_parse:
 	return ERR_PTR(err);
 }
 
+static int mlx5_ib_modify_action_xfrm(struct ib_action_xfrm *action,
+				      u32 attr_mask,
+				      const union ib_action_attrs *attr,
+				      struct ib_udata *udata)
+{
+	struct mlx5_ib_dev *dev = to_mdev(action->device);
+	struct mlx5_ib_modify_action_xfrm_resp resp = {};
+	size_t min_resp_sz =
+		offsetof(typeof(resp), reserved) + sizeof(resp.reserved);
+	int err = 0;
+
+	if (udata && udata->inlen > 0 &&
+	    !ib_is_udata_cleared(udata, 0,
+				 udata->inlen))
+		return -EOPNOTSUPP;
+
+	if (udata && udata->outlen && udata->outlen < min_resp_sz)
+		return -EOPNOTSUPP;
+
+	pr_info("mlx5_ib: in modify action xfrm\n");
+	/* TODO: Do something userful here */
+
+	if (udata && udata->outlen) {
+		resp.response_length = min_resp_sz;
+		if (ib_copy_to_udata(udata, &resp, resp.response_length))
+			mlx5_ib_warn(dev,
+				     "%s: Can't modify action of type %d\n",
+				     __func__, action->type);
+	}
+
+	return err;
+}
+
 static int mlx5_ib_destroy_action_xfrm(struct ib_action_xfrm *action)
 {
 	struct mlx5_ib_action_xfrm *maction = to_mact_xfrm(action);
@@ -4335,9 +4368,12 @@ static void *mlx5_ib_add(struct mlx5_core_dev *mdev)
 	set_bit(IB_USER_VERBS_EX_CMD_DESTROY_FLOW, dev->ib_dev.uverbs_ex_cmd_mask);
 	dev->ib_dev.create_action_xfrm = mlx5_ib_create_action_xfrm;
 	dev->ib_dev.destroy_action_xfrm = mlx5_ib_destroy_action_xfrm;
+	dev->ib_dev.modify_action_xfrm = mlx5_ib_modify_action_xfrm;
 	set_bit(IB_USER_VERBS_EX_CMD_CREATE_ACTION_XFRM,
 		dev->ib_dev.uverbs_ex_cmd_mask);
 	set_bit(IB_USER_VERBS_EX_CMD_DESTROY_ACTION_XFRM,
+		dev->ib_dev.uverbs_ex_cmd_mask);
+	set_bit(IB_USER_VERBS_EX_CMD_MODIFY_ACTION_XFRM,
 		dev->ib_dev.uverbs_ex_cmd_mask);
 
 	if (mlx5_ib_port_link_layer(&dev->ib_dev, 1) ==

@@ -389,4 +389,9 @@ struct mlx5_ib_create_action_xfrm_resp {
 	__u32			reserved;
 };
 
+struct mlx5_ib_modify_action_xfrm_resp {
+	__u32			response_length;
+	__u32			reserved;
+};
+
 #endif /* MLX5_ABI_USER_H */
