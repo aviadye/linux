@@ -4230,12 +4230,16 @@ static void *mlx5_ib_add(struct mlx5_core_dev *mdev)
 		(1ull << IB_USER_VERBS_CMD_DESTROY_SRQ)		|
 		(1ull << IB_USER_VERBS_CMD_CREATE_XSRQ)		|
 		(1ull << IB_USER_VERBS_CMD_OPEN_QP);
-	dev->ib_dev.uverbs_ex_cmd_mask =
-		(1ull << IB_USER_VERBS_EX_CMD_QUERY_DEVICE)	|
-		(1ull << IB_USER_VERBS_EX_CMD_CREATE_CQ)	|
-		(1ull << IB_USER_VERBS_EX_CMD_CREATE_QP)	|
-		(1ull << IB_USER_VERBS_EX_CMD_MODIFY_QP)	|
-		(1ull << IB_USER_VERBS_EX_CMD_MODIFY_CQ);
+	set_bit(IB_USER_VERBS_EX_CMD_QUERY_DEVICE,
+		dev->ib_dev.uverbs_ex_cmd_mask);
+	set_bit(IB_USER_VERBS_EX_CMD_CREATE_CQ,
+		dev->ib_dev.uverbs_ex_cmd_mask);
+	set_bit(IB_USER_VERBS_EX_CMD_CREATE_QP,
+		dev->ib_dev.uverbs_ex_cmd_mask);
+	set_bit(IB_USER_VERBS_EX_CMD_MODIFY_QP,
+		dev->ib_dev.uverbs_ex_cmd_mask);
+	set_bit(IB_USER_VERBS_EX_CMD_MODIFY_CQ,
+		dev->ib_dev.uverbs_ex_cmd_mask);
 
 	dev->ib_dev.query_device	= mlx5_ib_query_device;
 	dev->ib_dev.query_port		= mlx5_ib_query_port;
@@ -4325,14 +4329,14 @@ static void *mlx5_ib_add(struct mlx5_core_dev *mdev)
 
 	dev->ib_dev.create_flow	= mlx5_ib_create_flow;
 	dev->ib_dev.destroy_flow = mlx5_ib_destroy_flow;
-	dev->ib_dev.uverbs_ex_cmd_mask |=
-			(1ull << IB_USER_VERBS_EX_CMD_CREATE_FLOW) |
-			(1ull << IB_USER_VERBS_EX_CMD_DESTROY_FLOW);
+	set_bit(IB_USER_VERBS_EX_CMD_CREATE_FLOW, dev->ib_dev.uverbs_ex_cmd_mask);
+	set_bit(IB_USER_VERBS_EX_CMD_DESTROY_FLOW, dev->ib_dev.uverbs_ex_cmd_mask);
 	dev->ib_dev.create_action_xfrm = mlx5_ib_create_action_xfrm;
 	dev->ib_dev.destroy_action_xfrm = mlx5_ib_destroy_action_xfrm;
-	dev->ib_dev.uverbs_ex_cmd_mask |=
-			(1ull << IB_USER_VERBS_EX_CMD_CREATE_ACTION_XFRM) |
-			(1ull << IB_USER_VERBS_EX_CMD_DESTROY_ACTION_XFRM);
+	set_bit(IB_USER_VERBS_EX_CMD_CREATE_ACTION_XFRM,
+		dev->ib_dev.uverbs_ex_cmd_mask);
+	set_bit(IB_USER_VERBS_EX_CMD_DESTROY_ACTION_XFRM,
+		dev->ib_dev.uverbs_ex_cmd_mask);
 
 	if (mlx5_ib_port_link_layer(&dev->ib_dev, 1) ==
 	    IB_LINK_LAYER_ETHERNET) {
@@ -4341,12 +4345,16 @@ static void *mlx5_ib_add(struct mlx5_core_dev *mdev)
 		dev->ib_dev.destroy_wq	 = mlx5_ib_destroy_wq;
 		dev->ib_dev.create_rwq_ind_table = mlx5_ib_create_rwq_ind_table;
 		dev->ib_dev.destroy_rwq_ind_table = mlx5_ib_destroy_rwq_ind_table;
-		dev->ib_dev.uverbs_ex_cmd_mask |=
-			(1ull << IB_USER_VERBS_EX_CMD_CREATE_WQ) |
-			(1ull << IB_USER_VERBS_EX_CMD_MODIFY_WQ) |
-			(1ull << IB_USER_VERBS_EX_CMD_DESTROY_WQ) |
-			(1ull << IB_USER_VERBS_EX_CMD_CREATE_RWQ_IND_TBL) |
-			(1ull << IB_USER_VERBS_EX_CMD_DESTROY_RWQ_IND_TBL);
+		set_bit(IB_USER_VERBS_EX_CMD_CREATE_WQ,
+			dev->ib_dev.uverbs_ex_cmd_mask);
+		set_bit(IB_USER_VERBS_EX_CMD_MODIFY_WQ,
+			dev->ib_dev.uverbs_ex_cmd_mask);
+		set_bit(IB_USER_VERBS_EX_CMD_DESTROY_WQ,
+			dev->ib_dev.uverbs_ex_cmd_mask);
+		set_bit(IB_USER_VERBS_EX_CMD_CREATE_RWQ_IND_TBL,
+			dev->ib_dev.uverbs_ex_cmd_mask);
+		set_bit(IB_USER_VERBS_EX_CMD_DESTROY_RWQ_IND_TBL,
+			dev->ib_dev.uverbs_ex_cmd_mask);
 	}
 	err = init_node_data(dev);
 	if (err)

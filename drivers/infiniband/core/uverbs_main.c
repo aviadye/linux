@@ -637,14 +637,11 @@ err_put_refs:
 
 static int verify_command_mask(struct ib_device *ib_dev, __u32 command)
 {
-	u64 mask;
-
 	if (command <= IB_USER_VERBS_CMD_OPEN_QP)
-		mask = ib_dev->uverbs_cmd_mask;
-	else
-		mask = ib_dev->uverbs_ex_cmd_mask;
+		return ib_dev->uverbs_cmd_mask & ((u64)1 << command) ? 0 : -1;
 
-	if (mask & ((u64)1 << command))
+	if (command < IB_USER_VERBS_EX_CMD_LAST &&
+	    test_bit(command, ib_dev->uverbs_ex_cmd_mask))
 		return 0;
 
 	return -1;

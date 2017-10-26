@@ -2394,7 +2394,7 @@ struct ib_device {
 
 	int			     uverbs_abi_ver;
 	u64			     uverbs_cmd_mask;
-	u64			     uverbs_ex_cmd_mask;
+	DECLARE_BITMAP(uverbs_ex_cmd_mask, IB_USER_VERBS_EX_CMD_LAST);
 
 	char			     node_desc[IB_DEVICE_NODE_DESC_MAX];
 	__be64			     node_guid;
