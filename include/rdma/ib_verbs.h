@@ -2366,6 +2366,10 @@ struct ib_device {
 							 const union ib_action_attrs *attr,
 							 struct ib_udata *udata);
 	int			   (*destroy_action_xfrm)(struct ib_action_xfrm *action);
+	int			   (*modify_action_xfrm)(struct ib_action_xfrm *action,
+							 u32 attr_mask,
+							 const union ib_action_attrs *attr,
+							 struct ib_udata *udata);
 
 	/**
 	 * rdma netdev operation

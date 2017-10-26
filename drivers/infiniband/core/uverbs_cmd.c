@@ -3533,8 +3533,10 @@ union action_xfrms {
 
 static int parse_action_xfrm(u32 type, struct ib_udata *ucore,
 			     union action_xfrms *action,
-			     union ib_action_attrs *attr)
+			     union ib_action_attrs *attr,
+			     bool is_modify)
 {
+#define IS_FIELD_SET(_action, _fld)	(!is_modify || ((_action).attr_mask & (_fld)))
 	size_t	action_req_size;
 	const size_t  kern_known_size = sizeof(*action) +
 		sizeof(struct ib_uverbs_create_action_xfrm);
@@ -3547,13 +3549,17 @@ static int parse_action_xfrm(u32 type, struct ib_udata *ucore,
 			sizeof(action->esp_aes_gcm);
 		if (ucore->inlen < action_req_size ||
 		    action->esp_aes_gcm.reserved ||
-		    action->esp_aes_gcm.comp_mask ||
+		    ((is_modify &&
+		      action->esp_aes_gcm.attr_mask >= IB_UVERBS_ACTION_XFRM_ESP_AES_GCM_ATTR_RESERVED) ||
+		     (!is_modify && action->esp_aes_gcm.comp_mask)) ||
 		    !ib_is_udata_cleared(ucore, action_req_size,
 					 size - action_req_size))
 			return -EOPNOTSUPP;
 
 		/* Possible ipsec key lengths according to the spec */
-		if (action->esp_aes_gcm.key_length != 32 &&
+		if (IS_FIELD_SET(action->esp_aes_gcm,
+				 IB_UVERBS_ACTION_XFRM_ESP_AES_GCM_ATTR_KEY) &&
+		    action->esp_aes_gcm.key_length != 32 &&
 		    action->esp_aes_gcm.key_length != 24 &&
 		    action->esp_aes_gcm.key_length != 16)
 			return -EINVAL;
@@ -3580,6 +3586,7 @@ static int parse_action_xfrm(u32 type, struct ib_udata *ucore,
 
 		attr->esp_aes_gcm.flags = action->esp_aes_gcm.flags;
 
+		ret = is_modify ? action->esp_aes_gcm.attr_mask : 0;
 		break;
 	default:
 		return -EOPNOTSUPP;
@@ -3624,7 +3631,8 @@ int ib_uverbs_ex_create_action_xfrm(struct ib_uverbs_file *file,
 	if (cmd.hdr.reserved)
 		return -EOPNOTSUPP;
 
-	ret = parse_action_xfrm(cmd.hdr.action_id, ucore, &cmd.action, &attr);
+	ret = parse_action_xfrm(cmd.hdr.action_id, ucore, &cmd.action, &attr,
+				false);
 	if (ret < 0)
 		return ret;
 
@@ -3659,6 +3667,73 @@ err_copy:
 	ib_dev->destroy_action_xfrm(action);
 err_action:
 	uobj_alloc_abort(uobj);
+	return ret;
+}
+
+int ib_uverbs_ex_modify_action_xfrm(struct ib_uverbs_file *file,
+				    struct ib_device *ib_dev,
+				    struct ib_udata *ucore,
+				    struct ib_udata *uhw)
+{
+	struct {
+		struct ib_uverbs_modify_action_xfrm	hdr;
+		union action_xfrms			action;
+	} cmd = {};
+	struct ib_uverbs_modify_action_xfrm_resp  resp = {};
+	union ib_action_attrs		  attr;
+	struct ib_action_xfrm		  *action;
+	struct ib_uobject		  *uobj;
+	int				  ret;
+	size_t				  size;
+
+	if (ucore->inlen < sizeof(cmd.hdr))
+		return -EINVAL;
+
+	if (ucore->outlen < sizeof(resp))
+		return -ENOSPC;
+
+	size = min_t(size_t, sizeof(cmd), ucore->inlen);
+
+	if (ucore->inlen > sizeof(cmd) &&
+	    !ib_is_udata_cleared(ucore, sizeof(cmd),
+				 ucore->inlen - sizeof(cmd)))
+		return -EOPNOTSUPP;
+
+	ret = ib_copy_from_udata(&cmd, ucore, size);
+	if (ret)
+		return ret;
+
+	if (cmd.hdr.reserved)
+		return -EOPNOTSUPP;
+
+	uobj = uobj_get_write(uobj_get_type(action_xfrm), cmd.hdr.action_handle,
+			      file->ucontext);
+	if (IS_ERR(uobj))
+		return PTR_ERR(uobj);
+
+	action = (struct ib_action_xfrm *)uobj->object;
+
+	ret = parse_action_xfrm(action->type, ucore, &cmd.action, &attr, true);
+	if (ret < 0)
+		goto err_parse;
+
+	ret = ib_dev->modify_action_xfrm(action, ret, &attr, uhw);
+	if (ret)
+		goto err_parse;
+
+	resp.response_length = min_t(size_t, sizeof(resp), ucore->outlen);
+
+	/*
+	 * Modifying an action is atomic. We already changed the action and we
+	 * can't guarantee a rollback would succeed. We assume users initialize
+	 * the response_length to 0, so if we can't copy, they'll get zero
+	 * response length but a success error code.
+	 */
+	if (ib_copy_to_udata(ucore, &resp, resp.response_length))
+		pr_warn("ib_uverbs: failed to copy the response when modifying action_xfrm\n");
+
+err_parse:
+	uobj_put_write(uobj);
 	return ret;
 }
 

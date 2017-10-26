@@ -104,6 +104,7 @@ enum {
 	IB_USER_VERBS_EX_CMD_MODIFY_CQ,
 	IB_USER_VERBS_EX_CMD_CREATE_ACTION_XFRM,
 	IB_USER_VERBS_EX_CMD_DESTROY_ACTION_XFRM,
+	IB_USER_VERBS_EX_CMD_MODIFY_ACTION_XFRM,
 	IB_USER_VERBS_EX_CMD_LAST,
 };
 
@@ -1068,8 +1069,22 @@ enum {
 	IB_UVERBS_ACTION_XFRM_ESP_AES_GCM = 1,
 };
 
+enum {
+	IB_UVERBS_ACTION_XFRM_ESP_AES_GCM_ATTR_KEY	= 1UL << 0,
+	IB_UVERBS_ACTION_XFRM_ESP_AES_GCM_ATTR_SALT	= 1UL << 1,
+	IB_UVERBS_ACTION_XFRM_ESP_AES_GCM_ATTR_SEQIV	= 1UL << 2,
+	IB_UVERBS_ACTION_XFRM_ESP_AES_GCM_ATTR_ESN	= 1UL << 3,
+	IB_UVERBS_ACTION_XFRM_ESP_AES_GCM_ATTR_FLAGS	= 1UL << 4,
+	IB_UVERBS_ACTION_XFRM_ESP_AES_GCM_ATTR_RESERVED	= 1UL << 5,
+};
+
 struct ib_uverbs_action_xfrm_esp_aes_gcm {
-	__u32				comp_mask;
+	union {
+		/* In create command, used as comp_mask */
+		__u32				comp_mask;
+		/* In modify command, indicates which fields are we changing */
+		__u32				attr_mask;
+	};
 	__u32			        key_length;
 	__u8			        key[32];
 	__u8			        salt[4];
@@ -1090,6 +1105,19 @@ struct ib_uverbs_create_action_xfrm {
 struct ib_uverbs_create_action_xfrm_resp {
 	__u32				response_length;
 	__u32				action_handle;
+};
+
+struct ib_uverbs_modify_action_xfrm {
+	__u32				action_handle;
+	__u32				reserved;
+	/* Following are the action parameters
+	 * struct ib_uverbs_action_xfrm_xxxx;
+	 */
+};
+
+struct ib_uverbs_modify_action_xfrm_resp {
+	__u32				response_length;
+	__u32				reserved;
 };
 
 struct ib_uverbs_destroy_action_xfrm {
