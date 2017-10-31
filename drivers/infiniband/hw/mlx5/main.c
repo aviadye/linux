@@ -1414,6 +1414,14 @@ static struct ib_ucontext *mlx5_ib_alloc_ucontext(struct ib_device *ibdev,
 	resp.response_length = min(offsetof(typeof(resp), response_length) +
 				   sizeof(resp.response_length), udata->outlen);
 
+	if (mlx5_accel_ipsec_device_caps(dev->mdev) & MLX5_ACCEL_IPSEC_DEVICE) {
+		resp.flags |= MLX5_USER_ALLOC_UCONTEXT_FLAGS_FS_ESP_AES_GCM_RX;
+		if (mlx5_accel_ipsec_device_caps(dev->mdev) & MLX5_ACCEL_IPSEC_REQUIRE_METADATA)
+			resp.flags |= MLX5_USER_ALLOC_UCONTEXT_FLAGS_FS_ESP_AES_GCM_REQ_METADATA;
+		if (mlx5_get_flow_namespace(dev->mdev, MLX5_FLOW_NAMESPACE_EGRESS))
+			resp.flags |= MLX5_USER_ALLOC_UCONTEXT_FLAGS_FS_ESP_AES_GCM_TX;
+	}
+
 	context = kzalloc(sizeof(*context), GFP_KERNEL);
 	if (!context)
 		return ERR_PTR(-ENOMEM);
