@@ -74,6 +74,16 @@ struct mlx5e_ipsec_stats {
 	u64 ipsec_cmd_drop;
 };
 
+#define MLX5E_ESN_SCOPE_START 0x0
+#define MLX5E_ESN_SCOPE_MID 0x80000000L
+
+struct mlx5e_ipsec_esn_state {
+	bool scope_mid_cmd;
+	bool scope_start_cmd;
+	u32 esn;
+	u8 overlap: 1;
+};
+
 struct mlx5e_ipsec {
 	struct mlx5e_priv *en_priv;
 	bool no_trailer;
@@ -82,6 +92,7 @@ struct mlx5e_ipsec {
 	struct ida halloc;
 	struct mlx5e_ipsec_sw_stats sw_stats;
 	struct mlx5e_ipsec_stats stats;
+	struct mlx5e_ipsec_esn_state esn_state;
 };
 
 void mlx5e_ipsec_build_inverse_table(void);

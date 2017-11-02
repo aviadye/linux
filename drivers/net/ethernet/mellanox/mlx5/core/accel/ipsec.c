@@ -38,12 +38,12 @@
 #include "fpga/ipsec.h"
 
 void *mlx5_accel_ipsec_sa_cmd_exec(struct mlx5_core_dev *mdev,
-				   struct mlx5_accel_ipsec_sa *cmd)
+				   struct mlx5_accel_ipsec_sa *cmd, int cmd_size)
 {
 	if (!MLX5_IPSEC_DEV(mdev))
 		return ERR_PTR(-EOPNOTSUPP);
 
-	return mlx5_fpga_ipsec_sa_cmd_exec(mdev, cmd);
+	return mlx5_fpga_ipsec_sa_cmd_exec(mdev, cmd, cmd_size);
 }
 
 int mlx5_accel_ipsec_sa_cmd_wait(void *ctx)
