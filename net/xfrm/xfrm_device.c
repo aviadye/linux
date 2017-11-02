@@ -65,8 +65,8 @@ int xfrm_dev_state_add(struct net *net, struct xfrm_state *x,
 	if (!x->type_offload)
 		return -EINVAL;
 
-	/* We don't yet support UDP encapsulation, TFC padding and ESN. */
-	if (x->encap || x->tfcpad || (x->props.flags & XFRM_STATE_ESN))
+	/* We don't yet support UDP encapsulation and TFC padding. */
+	if (x->encap || x->tfcpad)
 		return -EINVAL;
 
 	dev = dev_get_by_index(net, xuo->ifindex);
