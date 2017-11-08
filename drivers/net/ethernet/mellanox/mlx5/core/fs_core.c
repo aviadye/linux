@@ -37,6 +37,7 @@
 #include "fs_core.h"
 #include "fs_cmd.h"
 #include "diag/fs_tracepoint.h"
+#include "accel/ipsec.h"
 
 #define INIT_TREE_NODE_ARRAY_SIZE(...)	(sizeof((struct init_tree_node[]){__VA_ARGS__}) /\
 					 sizeof(struct init_tree_node))
@@ -2044,6 +2045,11 @@ struct mlx5_flow_namespace *mlx5_get_flow_namespace(struct mlx5_core_dev *dev,
 			return &steering->sniffer_tx_root_ns->ns;
 		else
 			return NULL;
+	case MLX5_FLOW_NAMESPACE_EGRESS:
+		if (steering->egress_root_ns)
+			return &steering->egress_root_ns->ns;
+		else
+			return NULL;
 	default:
 		return NULL;
 	}
@@ -2219,6 +2225,18 @@ static const struct mlx5_flow_cmds mlx5_flow_cmds = {
 	.update_root_ft = mlx5_cmd_update_root_ft,
 };
 
+static const struct mlx5_flow_cmds mlx5_flow_cmd_defs = {
+	.create_flow_table = mlx5_cmd_def_create_flow_table,
+	.destroy_flow_table = mlx5_cmd_def_destroy_flow_table,
+	.modify_flow_table = mlx5_cmd_def_modify_flow_table,
+	.create_flow_group = mlx5_cmd_def_create_flow_group,
+	.destroy_flow_group = mlx5_cmd_def_destroy_flow_group,
+	.create_fte = mlx5_cmd_def_create_fte,
+	.update_fte = mlx5_cmd_def_update_fte,
+	.delete_fte = mlx5_cmd_def_delete_fte,
+	.update_root_ft = mlx5_cmd_def_update_root_ft,
+};
+
 static struct mlx5_flow_root_namespace
 *create_root_ns(struct mlx5_flow_steering *steering,
 		enum fs_flow_table_type table_type,
@@ -2366,6 +2384,7 @@ void mlx5_cleanup_fs(struct mlx5_core_dev *dev)
 	cleanup_root_ns(steering->fdb_root_ns);
 	cleanup_root_ns(steering->sniffer_rx_root_ns);
 	cleanup_root_ns(steering->sniffer_tx_root_ns);
+	cleanup_root_ns(steering->egress_root_ns);
 	mlx5_cleanup_fc_stats(dev);
 	kmem_cache_destroy(steering->ftes_cache);
 	kmem_cache_destroy(steering->fgs_cache);
@@ -2466,6 +2485,21 @@ static int init_egress_acl_root_ns(struct mlx5_flow_steering *steering)
 	return PTR_ERR_OR_ZERO(prio);
 }
 
+static int init_egress_root_ns(struct mlx5_flow_steering *steering)
+{
+	struct fs_prio *prio;
+
+	steering->egress_root_ns = create_root_ns(steering,
+						  FS_FT_NIC_TX,
+						  &mlx5_flow_cmd_defs);
+	if (!steering->egress_root_ns)
+		return -ENOMEM;
+
+	/* create 1 prio*/
+	prio = fs_create_prio(&steering->egress_root_ns->ns, 0, 1);
+	return PTR_ERR_OR_ZERO(prio);
+}
+
 int mlx5_init_fs(struct mlx5_core_dev *dev)
 {
 	struct mlx5_flow_steering *steering;
@@ -2527,6 +2561,12 @@ int mlx5_init_fs(struct mlx5_core_dev *dev)
 
 	if (MLX5_CAP_FLOWTABLE_SNIFFER_TX(dev, ft_support)) {
 		err = init_sniffer_tx_root_ns(steering);
+		if (err)
+			goto err;
+	}
+
+	if (mlx5_accel_ipsec_device_caps(steering->dev) & MLX5_ACCEL_IPSEC_DEVICE) {
+		err = init_egress_root_ns(steering);
 		if (err)
 			goto err;
 	}
