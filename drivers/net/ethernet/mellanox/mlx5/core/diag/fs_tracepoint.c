@@ -66,15 +66,15 @@ static void print_lyr_2_4_hdrs(struct trace_seq *p,
 #define MASK_VAL_L2(type, name, fld) \
 	MASK_VAL(type, fte_match_set_lyr_2_4, name, mask, value, fld)
 	DECLARE_MASK_VAL(u64, smac) = {
-		.m = MLX5_GET(fte_match_set_lyr_2_4, mask, smac_47_16) << 16 |
-		     MLX5_GET(fte_match_set_lyr_2_4, mask, smac_15_0),
-		.v = MLX5_GET(fte_match_set_lyr_2_4, value, smac_47_16) << 16 |
-		     MLX5_GET(fte_match_set_lyr_2_4, value, smac_15_0)};
+		.m = MLX5_GET_BE(u32, fte_match_set_lyr_2_4, mask, smac_47_16) << 16 |
+		     MLX5_GET_BE(u16, fte_match_set_lyr_2_4, mask, smac_15_0),
+		.v = MLX5_GET_BE(u32, fte_match_set_lyr_2_4, value, smac_47_16) << 16 |
+		     MLX5_GET_BE(u16, fte_match_set_lyr_2_4, value, smac_15_0)};
 	DECLARE_MASK_VAL(u64, dmac) = {
-		.m = MLX5_GET(fte_match_set_lyr_2_4, mask, dmac_47_16) << 16 |
-		     MLX5_GET(fte_match_set_lyr_2_4, mask, dmac_15_0),
-		.v = MLX5_GET(fte_match_set_lyr_2_4, value, dmac_47_16) << 16 |
-		     MLX5_GET(fte_match_set_lyr_2_4, value, dmac_15_0)};
+		.m = MLX5_GET_BE(u32, fte_match_set_lyr_2_4, mask, dmac_47_16) << 16 |
+		     MLX5_GET_BE(u16, fte_match_set_lyr_2_4, mask, dmac_15_0),
+		.v = MLX5_GET_BE(u32, fte_match_set_lyr_2_4, value, dmac_47_16) << 16 |
+		     MLX5_GET_BE(u16, fte_match_set_lyr_2_4, value, dmac_15_0)};
 	MASK_VAL_L2(u16, ethertype, ethertype);
 
 	PRINT_MASKED_VALP(smac, u8 *, p, "%pM");
