@@ -277,6 +277,8 @@ u32 mlx5_fpga_ipsec_device_caps(struct mlx5_core_dev *mdev)
 	if (!fdev->ipsec)
 		return ret;
 
+	ret |= MLX5_ACCEL_IPSEC_REQUIRE_METADATA;
+
 	if (MLX5_GET(ipsec_extended_cap, fdev->ipsec->caps, esp))
 		ret |= MLX5_ACCEL_IPSEC_ESP;
 
