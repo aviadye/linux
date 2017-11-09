@@ -223,6 +223,7 @@ struct mlx5_flow_root_namespace {
 	struct mutex			chain_lock;
 	struct list_head		underlay_qpns;
 	const struct mlx5_flow_cmds	*cmds;
+	struct blocking_notifier_head	rule_nh;
 };
 
 int mlx5_init_fc_stats(struct mlx5_core_dev *dev);
