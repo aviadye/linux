@@ -91,8 +91,10 @@ struct mlx5_accel_ipsec_ctx *mlx5_accel_ipsec_create_xfrm_ctx(struct mlx5_core_d
 	ctx->mdev = mdev;
 	return ctx;
 }
+EXPORT_SYMBOL_GPL(mlx5_accel_ipsec_create_xfrm_ctx);
 
 void mlx5_accel_ipsec_destroy_xfrm_ctx(struct mlx5_accel_ipsec_ctx *ctx)
 {
 	mlx5_fpga_ipsec_destroy_xfrm_ctx(ctx);
 }
+EXPORT_SYMBOL_GPL(mlx5_accel_ipsec_destroy_xfrm_ctx);
