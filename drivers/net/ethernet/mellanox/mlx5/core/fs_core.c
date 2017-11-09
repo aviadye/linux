@@ -375,6 +375,130 @@ static bool check_valid_spec(const struct mlx5_flow_spec *spec)
 	return check_last_reserved(spec->match_value);
 }
 
+enum {
+	CALL_NOTIFIERS_CHAIN_CONTINUE_ON_ERR = 1 << 0,
+};
+
+#ifdef CONFIG_MLX5_CORE_FS_NOTIFIERS
+static void fill_notifier_data(struct mlx5_fs_rule_notifier_attrs *attrs,
+			       struct fs_node *node, int id,
+			       u8   *match_criteria_enable,
+			       u32  *match_criteria,
+			       u32  *match_value,
+			       struct mlx5_flow_act *flow_act)
+{
+	struct mlx5_flow_table *ft;
+
+	while (node->type != FS_TYPE_FLOW_TABLE)
+		node = node->parent;
+	fs_get_obj(ft, node);
+
+	attrs->ft = ft;
+	attrs->spec.match_criteria_enable = match_criteria_enable;
+	attrs->spec.match_criteria = match_criteria;
+	attrs->spec.match_value = match_value;
+	attrs->spec.flow_act = flow_act;
+	attrs->id = id;
+}
+
+static int call_notifiers_chain(struct mlx5_fs_rule_notifier_attrs *attrs,
+				struct fs_node *node,
+				enum mlx5_fs_rule_notify_action event,
+				bool success, u32 flags)
+{
+	int ret = 0;
+
+	attrs->success = success;
+
+	while (node) {
+		if (node->type == FS_TYPE_NAMESPACE) {
+			struct mlx5_flow_namespace *ns;
+			int err;
+
+			fs_get_obj(ns, node);
+			err = blocking_notifier_call_chain(&ns->rule_nh,
+							   event,
+							   attrs);
+			if (err & NOTIFY_STOP_MASK) {
+				err = notifier_to_errno(err);
+				if  (!err)
+					err = -EINTR;
+				if (!(flags &
+				      CALL_NOTIFIERS_CHAIN_CONTINUE_ON_ERR))
+					return err;
+				ret = ret ?: err;
+			}
+		}
+		node = node->parent;
+	}
+
+	return ret;
+}
+
+static void fill_notifier_data_by_node(struct mlx5_fs_rule_notifier_attrs *attrs,
+				       struct fs_node *node, int id)
+{
+	struct fs_fte *fte;
+	struct mlx5_flow_group *fg;
+
+	while (node->type != FS_TYPE_FLOW_ENTRY)
+		node = node->parent;
+	fs_get_obj(fte, node);
+
+	while (node->type != FS_TYPE_FLOW_GROUP)
+		node = node->parent;
+	fs_get_obj(fg, node);
+
+	fill_notifier_data(attrs, &fg->node, id,
+			   &fg->mask.match_criteria_enable,
+			   fg->mask.match_criteria,
+			   fte->val, &fte->action);
+}
+
+static int notifier_get_id(struct mlx5_flow_table *ft)
+{
+	return ida_simple_get(&ft->notifiers_ida, 0, 0, GFP_KERNEL);
+}
+
+static void notifier_remove_id(struct mlx5_flow_table *ft, int id)
+{
+	ida_simple_remove(&ft->notifiers_ida, id);
+}
+
+#else
+static void fill_notifier_data(struct mlx5_fs_rule_notifier_attrs *attrs,
+			       struct fs_node *node, int id,
+			       u8   *match_criteria_enable,
+			       u32  *match_criteria,
+			       u32  *match_value,
+			       struct mlx5_flow_act *flow_act)
+{
+}
+
+static int call_notifiers_chain(struct mlx5_fs_rule_notifier_attrs *attrs,
+				struct fs_node *node,
+				enum mlx5_fs_rule_notify_action event,
+				bool success, u32 flags)
+{
+	return NOTIFY_DONE;
+}
+
+static void fill_notifier_data_by_node(struct mlx5_fs_rule_notifier_attrs *attrs,
+				       struct fs_node *node, int id)
+{
+}
+
+static int notifier_get_id(struct mlx5_flow_table *ft)
+{
+	return 0;
+}
+
+static void notifier_remove_id(struct mlx5_flow_table *ft, int id)
+{
+}
+
+#endif
+
 static struct mlx5_flow_root_namespace *find_root(struct fs_node *node)
 {
 	struct fs_node *root;
@@ -435,6 +559,7 @@ static void del_sw_flow_table(struct fs_node *node)
 	fs_get_obj(ft, node);
 
 	rhltable_destroy(&ft->fgs_hash);
+	ida_destroy(&ft->notifiers_ida);
 	fs_get_obj(prio, ft->node.parent);
 	prio->num_ft--;
 	kfree(ft);
@@ -712,6 +837,7 @@ static struct mlx5_flow_table *alloc_flow_table(int level, u16 vport, int max_ft
 	ft->flags = flags;
 	INIT_LIST_HEAD(&ft->fwd_rules);
 	mutex_init(&ft->lock);
+	ida_init(&ft->notifiers_ida);
 
 	return ft;
 }
@@ -1729,6 +1855,7 @@ _mlx5_add_flow_rules(struct mlx5_flow_table *ft,
 
 {
 	struct mlx5_flow_steering *steering = get_steering(&ft->node);
+	struct mlx5_fs_rule_notifier_attrs notifier_attrs;
 	struct mlx5_flow_group *g;
 	struct mlx5_flow_handle *rule;
 	struct match_list_head match_head;
@@ -1736,6 +1863,7 @@ _mlx5_add_flow_rules(struct mlx5_flow_table *ft,
 	struct fs_fte *fte;
 	int version;
 	int err;
+	int id;
 	int i;
 
 	if (!check_valid_spec(spec))
@@ -1745,6 +1873,22 @@ _mlx5_add_flow_rules(struct mlx5_flow_table *ft,
 		if (!dest_is_valid(&dest[i], flow_act->action, ft))
 			return ERR_PTR(-EINVAL);
 	}
+
+	id = notifier_get_id(ft);
+	if (id < 0) {
+		err = id;
+		goto err_id;
+	}
+
+	fill_notifier_data(&notifier_attrs, &ft->node, id,
+			   &spec->match_criteria_enable,
+			   spec->match_criteria,
+			   spec->match_value, flow_act);
+	err = call_notifiers_chain(&notifier_attrs, &ft->node,
+				   MLX5_FS_RULE_NOTIFY_ADD_PRE, false, 0);
+	if (err)
+		goto err_notifier;
+
 	nested_down_read_ref_node(&ft->node, FS_LOCK_GRANDPARENT);
 search_again_locked:
 	version = atomic_read(&ft->node.version);
@@ -1806,11 +1950,21 @@ search_again_locked:
 	up_write_ref_node(&fte->node);
 	tree_put_node(&fte->node);
 	tree_put_node(&g->node);
+	call_notifiers_chain(&notifier_attrs, &ft->node,
+			     MLX5_FS_RULE_NOTIFY_ADD_POST, true,
+			     CALL_NOTIFIERS_CHAIN_CONTINUE_ON_ERR);
+	rule->id = id;
 	return rule;
 
 err_release_fg:
 	up_write_ref_node(&g->node);
 	tree_put_node(&g->node);
+err_notifier:
+	call_notifiers_chain(&notifier_attrs, &ft->node,
+			     MLX5_FS_RULE_NOTIFY_ADD_POST, false,
+			     CALL_NOTIFIERS_CHAIN_CONTINUE_ON_ERR);
+	notifier_remove_id(ft, id);
+err_id:
 	return ERR_PTR(err);
 }
 
@@ -1874,9 +2028,29 @@ EXPORT_SYMBOL(mlx5_add_flow_rules);
 void mlx5_del_flow_rules(struct mlx5_flow_handle *handle)
 {
 	int i;
+	struct fs_node *node;
+	struct mlx5_flow_table *ft;
+	struct mlx5_fs_rule_notifier_attrs attrs;
+
+	if (WARN_ON(!handle->num_rules))
+		goto free;
+
+	node = &handle->rule[0]->node;
+	while (node->type != FS_TYPE_FLOW_TABLE)
+		node = node->parent;
+
+	fs_get_obj(ft, node);
+
+	fill_notifier_data_by_node(&attrs, &handle->rule[0]->node,
+				   handle->id);
+	WARN_ON(call_notifiers_chain(&attrs, &ft->node, MLX5_FS_RULE_NOTIFY_DEL,
+				     false, CALL_NOTIFIERS_CHAIN_CONTINUE_ON_ERR));
 
 	for (i = handle->num_rules - 1; i >= 0; i--)
 		tree_remove_node(&handle->rule[i]->node);
+
+	notifier_remove_id(ft, handle->id);
+free:
 	kfree(handle);
 }
 EXPORT_SYMBOL(mlx5_del_flow_rules);
@@ -2090,6 +2264,7 @@ static struct mlx5_flow_namespace *fs_init_namespace(struct mlx5_flow_namespace
 						     *ns)
 {
 	ns->node.type = FS_TYPE_NAMESPACE;
+	BLOCKING_INIT_NOTIFIER_HEAD(&ns->rule_nh);
 
 	return ns;
 }
@@ -2572,6 +2747,42 @@ int mlx5_init_fs(struct mlx5_core_dev *dev)
 err:
 	mlx5_cleanup_fs(dev);
 	return err;
+}
+
+int mlx5_fs_rule_notifier_register(struct mlx5_core_dev *dev,
+				   enum mlx5_flow_namespace_type type,
+				   struct notifier_block *nb)
+{
+	struct mlx5_flow_namespace *ns;
+	int ret;
+
+	if (!IS_ENABLED(CONFIG_MLX5_CORE_FS_NOTIFIERS))
+		return -EOPNOTSUPP;
+
+	ns = mlx5_get_flow_namespace(dev, type);
+	if (!ns)
+		return -EINVAL;
+
+	ret = blocking_notifier_chain_register(&ns->rule_nh, nb);
+	return ret;
+}
+
+int mlx5_fs_rule_notifier_unregister(struct mlx5_core_dev *dev,
+				     enum mlx5_flow_namespace_type type,
+				     struct notifier_block *nb)
+{
+	struct mlx5_flow_namespace *ns;
+	int ret;
+
+	if (!IS_ENABLED(CONFIG_MLX5_CORE_FS_NOTIFIERS))
+		return -EOPNOTSUPP;
+
+	ns = mlx5_get_flow_namespace(dev, type);
+	if (!ns)
+		return -EINVAL;
+
+	ret = blocking_notifier_chain_unregister(&ns->rule_nh, nb);
+	return ret;
 }
 
 int mlx5_fs_add_rx_underlay_qpn(struct mlx5_core_dev *dev, u32 underlay_qpn)

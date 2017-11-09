@@ -106,6 +106,7 @@ struct mlx5_flow_rule {
 
 struct mlx5_flow_handle {
 	int num_rules;
+	int id;
 	struct mlx5_flow_rule *rule[];
 };
 
@@ -129,6 +130,7 @@ struct mlx5_flow_table {
 	struct list_head		fwd_rules;
 	u32				flags;
 	struct rhltable			fgs_hash;
+	struct ida			notifiers_ida;
 };
 
 struct mlx5_fc_cache {
@@ -196,6 +198,7 @@ struct fs_prio {
 struct mlx5_flow_namespace {
 	/* parent == NULL => root ns */
 	struct	fs_node			node;
+	struct blocking_notifier_head	rule_nh;
 };
 
 struct mlx5_flow_group_mask {

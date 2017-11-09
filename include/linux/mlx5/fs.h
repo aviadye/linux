@@ -148,6 +148,31 @@ struct mlx5_flow_act {
 	struct mlx5_flow_act name = {MLX5_FLOW_CONTEXT_ACTION_FWD_DEST,\
 				     MLX5_FS_DEFAULT_FLOW_TAG, 0, 0}
 
+int mlx5_fs_rule_notifier_register(struct mlx5_core_dev *dev,
+				   enum mlx5_flow_namespace_type type,
+				   struct notifier_block *nb);
+int mlx5_fs_rule_notifier_unregister(struct mlx5_core_dev *dev,
+				     enum mlx5_flow_namespace_type type,
+				     struct notifier_block *nb);
+
+enum mlx5_fs_rule_notify_action {
+	MLX5_FS_RULE_NOTIFY_ADD_PRE,
+	MLX5_FS_RULE_NOTIFY_ADD_POST,
+	MLX5_FS_RULE_NOTIFY_DEL,
+};
+
+struct mlx5_fs_rule_notifier_attrs {
+	struct mlx5_flow_table *ft;
+	struct {
+		u8   *match_criteria_enable;
+		u32  *match_criteria;
+		u32  *match_value;
+		struct mlx5_flow_act *flow_act;
+	} spec;
+	bool success;
+	int id;
+};
+
 /* Single destination per rule.
  * Group ID is implied by the match criteria.
  */

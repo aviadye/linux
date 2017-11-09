@@ -85,3 +85,10 @@ config MLX5_EN_IPSEC
 	  Build support for IPsec cryptography-offload accelaration in the NIC.
 	  Note: Support for hardware with this capability needs to be selected
 	  for this option to become available.
+
+config MLX5_CORE_FS_NOTIFIERS
+	bool "Enable notifiers for flow-steering rules insertions and deletions"
+	default n
+	---help---
+	Notify on flow steering rule insertions.
+	This enables entities to register to rule insertions and deletions.
