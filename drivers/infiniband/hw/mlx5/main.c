@@ -61,7 +61,7 @@
 #include "mlx5_ib.h"
 #include "cmd.h"
 #include <linux/mlx5/vport.h>
-#include <linux/mlx5/fs_helpers.h>
+#include <linux/mlx5/accel.h>
 
 #define DRIVER_NAME "mlx5_ib"
 #define DRIVER_VERSION "5.0-0"
