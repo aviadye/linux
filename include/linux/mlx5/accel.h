@@ -48,10 +48,6 @@ enum {
 };
 
 struct mlx5_accel_ipsec_ctx;
-struct mlx5_accel_ipsec_ctx *mlx5_accel_ipsec_create_xfrm_ctx(struct mlx5_core_dev *mdev,
-							      const struct mlx5_accel_xfrm_ipsec_attrs *attrs,
-							      u32 flags);
-
 
 #ifdef CONFIG_MLX5_ACCEL
 
