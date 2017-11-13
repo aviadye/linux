@@ -1468,6 +1468,8 @@ static int create_rss_raw_qp_tir(struct mlx5_ib_dev *dev, struct mlx5_ib_qp *qp,
 		goto err;
 	}
 
+	// HANDLE HERE --> MLX5_RX_HASH_IPSEC_SPI
+
 	if (((ucmd.rx_hash_fields_mask & MLX5_RX_HASH_SRC_IPV4) ||
 	     (ucmd.rx_hash_fields_mask & MLX5_RX_HASH_DST_IPV4)) &&
 	     ((ucmd.rx_hash_fields_mask & MLX5_RX_HASH_SRC_IPV6) ||
