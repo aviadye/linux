@@ -105,6 +105,8 @@ struct mlx5_flow_rule {
 
 struct mlx5_flow_handle {
 	int num_rules;
+	/* TODO: MB: Move to rule? */
+	struct mlx5_fs_notifiers_priv 		notifiers_priv;
 	struct mlx5_flow_rule *rule[];
 };
 
@@ -195,6 +197,7 @@ struct fs_prio {
 struct mlx5_flow_namespace {
 	/* parent == NULL => root ns */
 	struct	fs_node			node;
+	struct blocking_notifier_head	rule_nh;
 };
 
 struct mlx5_flow_group_mask {
@@ -223,7 +226,6 @@ struct mlx5_flow_root_namespace {
 	struct mutex			chain_lock;
 	struct list_head		underlay_qpns;
 	const struct mlx5_flow_cmds	*cmds;
-	struct blocking_notifier_head	rule_nh;
 };
 
 int mlx5_init_fc_stats(struct mlx5_core_dev *dev);

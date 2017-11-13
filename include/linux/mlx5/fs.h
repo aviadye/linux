@@ -161,8 +161,11 @@ int mlx5_fs_rule_notifier_unregister(struct mlx5_core_dev *dev,
 enum mlx5_fs_rule_notify_action {
 	MLX5_FS_RULE_NOTIFY_ADD_PRE,
 	MLX5_FS_RULE_NOTIFY_ADD_POST,
-	MLX5_FS_RULE_NOTIFY_DEL_PRE,
-	MLX5_FS_RULE_NOTIFY_DEL_POST,
+	MLX5_FS_RULE_NOTIFY_DEL,
+};
+
+struct mlx5_fs_notifiers_priv {
+	struct fpga_ipsec_notifier_priv *fpga_ipsec_priv;
 };
 
 struct mlx5_fs_rule_notifier_attrs {
@@ -173,6 +176,7 @@ struct mlx5_fs_rule_notifier_attrs {
 		u32  *match_value;
 		struct mlx5_flow_act *flow_act;
 	} spec;
+	struct mlx5_fs_notifiers_priv notifiers_priv;
 	bool success;
 };
 

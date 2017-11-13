@@ -295,7 +295,9 @@ struct mlx5_ifc_flow_table_fields_supported_bits {
 	u8         inner_tcp_dport[0x1];
 	u8         inner_tcp_flags[0x1];
 	u8         reserved_at_37[0x9];
-	u8         reserved_at_40[0x1a];
+	u8         reserved_at_40[0x17];
+	u8	   outer_esp_spi[0x1];
+	u8	   reserved_at_58[0x2];
 	u8         bth_dst_qp[0x1];
 
 	u8         reserved_at_5b[0x25];

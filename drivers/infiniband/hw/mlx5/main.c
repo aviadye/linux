@@ -2564,7 +2564,7 @@ static struct mlx5_ib_flow_handler *_create_flow_rule(struct mlx5_ib_dev *dev,
 		if (is_egress)
 			flow_act.action |= MLX5_FLOW_CONTEXT_ACTION_ALLOW;
 		else
-			flow_act.action = dst ? MLX5_FLOW_CONTEXT_ACTION_FWD_DEST :
+			flow_act.action |= dst ? MLX5_FLOW_CONTEXT_ACTION_FWD_DEST :
 				MLX5_FLOW_CONTEXT_ACTION_FWD_NEXT_PRIO;
 	}
 

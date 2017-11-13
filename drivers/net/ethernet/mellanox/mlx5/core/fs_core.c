@@ -442,13 +442,12 @@ static void del_sw_flow_table(struct fs_node *node)
 
 static void del_sw_hw_rule(struct fs_node *node)
 {
-	struct mlx5_flow_root_namespace *root;
 	struct mlx5_flow_rule *rule;
+	struct mlx5_flow_root_namespace *root;
 	struct mlx5_flow_table *ft;
 	struct mlx5_flow_group *fg;
 	struct fs_fte *fte;
 	int modify_mask;
-	struct mlx5_fs_rule_notifier_attrs notifier_attrs;
 	struct mlx5_core_dev *dev = get_dev(node);
 	int err = 0;
 	bool update_fte = false;
@@ -479,15 +478,6 @@ static void del_sw_hw_rule(struct fs_node *node)
 		update_fte = true;
 	}
 out:
-	notifier_attrs.ft = ft;
-	notifier_attrs.spec.match_criteria_enable = &fg->mask.match_criteria_enable;
-	notifier_attrs.spec.match_criteria = fg->mask.match_criteria;
-	notifier_attrs.spec.match_value = fte->val;
-	notifier_attrs.spec.flow_act = &fte->action;
-	notifier_attrs.success = false;
-
-	blocking_notifier_call_chain(&root->rule_nh, MLX5_FS_RULE_NOTIFY_DEL_PRE,
-				     &notifier_attrs);
 	if (update_fte && fte->dests_size) {
 		err = root->cmds->update_fte(dev, ft, fg->id, modify_mask, fte);
 		if (err)
@@ -496,9 +486,6 @@ out:
 				       __func__, fg->id, fte->index);
 	}
 
-	notifier_attrs.success = !err;
-	blocking_notifier_call_chain(&root->rule_nh, MLX5_FS_RULE_NOTIFY_DEL_POST,
-				     &notifier_attrs);
 	kfree(rule);
 }
 
@@ -1202,6 +1189,28 @@ static void destroy_flow_handle(struct fs_fte *fte,
 				struct mlx5_flow_destination *dest,
 				int i)
 {
+	struct mlx5_fs_rule_notifier_attrs notifier_attrs;
+	struct mlx5_flow_namespace *ns;
+	struct mlx5_flow_table *ft;
+	struct mlx5_flow_group *fg;
+	struct fs_prio *prio;
+
+	fs_get_obj(fg, fte->node.parent);
+	fs_get_obj(ft, fg->node.parent);
+	fs_get_obj(prio, ft->node.parent);
+	fs_get_obj(ns, prio->node.parent);
+	notifier_attrs.ft = ft;
+	notifier_attrs.spec.match_criteria_enable = &fg->mask.match_criteria_enable;
+	notifier_attrs.spec.match_criteria = fg->mask.match_criteria;
+	notifier_attrs.spec.match_value = fte->val;
+	notifier_attrs.spec.flow_act = &fte->action;
+	notifier_attrs.success = true;
+	memcpy(&notifier_attrs.notifiers_priv, &handle->notifiers_priv,
+	       sizeof(notifier_attrs.notifiers_priv));
+
+	blocking_notifier_call_chain(&ns->rule_nh, MLX5_FS_RULE_NOTIFY_DEL,
+				     &notifier_attrs);
+
 	for (; --i >= 0;) {
 		if (atomic_dec_and_test(&handle->rule[i]->node.refcount)) {
 			fte->dests_size--;
@@ -1743,7 +1752,8 @@ _mlx5_add_flow_rules(struct mlx5_flow_table *ft,
 
 {
 	struct mlx5_flow_steering *steering = get_steering(&ft->node);
-	struct mlx5_flow_root_namespace *root = find_root(&ft->node);
+	struct fs_prio *prio;
+	struct mlx5_flow_namespace *ns;
 	struct mlx5_fs_rule_notifier_attrs notifier_attrs;
 	struct mlx5_flow_group *g;
 	struct mlx5_flow_handle *rule;
@@ -1769,7 +1779,9 @@ _mlx5_add_flow_rules(struct mlx5_flow_table *ft,
 	notifier_attrs.ft = ft;
 	notifier_attrs.success = false;
 
-	err = blocking_notifier_call_chain(&root->rule_nh, MLX5_FS_RULE_NOTIFY_ADD_PRE,
+	fs_get_obj(prio, ft->node.parent);
+	fs_get_obj(ns, prio->node.parent);
+	err = blocking_notifier_call_chain(&ns->rule_nh, MLX5_FS_RULE_NOTIFY_ADD_PRE,
 					   &notifier_attrs);
 	if (err & NOTIFY_STOP_MASK) {
 		err = notifier_to_errno(err);
@@ -1840,15 +1852,17 @@ search_again_locked:
 	tree_put_node(&fte->node);
 	tree_put_node(&g->node);
 	notifier_attrs.success = true;
-	blocking_notifier_call_chain(&root->rule_nh, MLX5_FS_RULE_NOTIFY_ADD_POST,
+	blocking_notifier_call_chain(&ns->rule_nh, MLX5_FS_RULE_NOTIFY_ADD_POST,
 				     &notifier_attrs);
+	memcpy(&rule->notifiers_priv, &notifier_attrs.notifiers_priv, 
+	       sizeof(notifier_attrs.notifiers_priv));
 	return rule;
 
 err_release_fg:
 	up_write_ref_node(&g->node);
 	tree_put_node(&g->node);
 	notifier_attrs.success = false;
-	blocking_notifier_call_chain(&root->rule_nh, MLX5_FS_RULE_NOTIFY_ADD_POST,
+	blocking_notifier_call_chain(&ns->rule_nh, MLX5_FS_RULE_NOTIFY_ADD_POST,
 				     &notifier_attrs);
 	return ERR_PTR(err);
 }
@@ -2129,6 +2143,7 @@ static struct mlx5_flow_namespace *fs_init_namespace(struct mlx5_flow_namespace
 						     *ns)
 {
 	ns->node.type = FS_TYPE_NAMESPACE;
+	BLOCKING_INIT_NOTIFIER_HEAD(&ns->rule_nh);
 
 	return ns;
 }
@@ -2289,7 +2304,6 @@ static struct mlx5_flow_root_namespace
 	root_ns->dev = steering->dev;
 	root_ns->table_type = table_type;
 	root_ns->cmds = cmds;
-	BLOCKING_INIT_NOTIFIER_HEAD(&root_ns->rule_nh);
 
 	INIT_LIST_HEAD(&root_ns->underlay_qpns);
 
@@ -2619,15 +2633,13 @@ int mlx5_fs_rule_notifier_register(struct mlx5_core_dev *dev,
 				   struct notifier_block *nb)
 {
 	struct mlx5_flow_namespace *ns;
-	struct mlx5_flow_root_namespace *root_ns;
 	int ret;
 
 	ns = mlx5_get_flow_namespace(dev, type);
 	if (!ns)
 		return -EINVAL;
 
-	root_ns = container_of(ns, struct mlx5_flow_root_namespace, ns);
-	ret = blocking_notifier_chain_register(&root_ns->rule_nh, nb);
+	ret = blocking_notifier_chain_register(&ns->rule_nh, nb);
 	return ret;
 }
 
@@ -2636,15 +2648,13 @@ int mlx5_fs_rule_notifier_unregister(struct mlx5_core_dev *dev,
 				     struct notifier_block *nb)
 {
 	struct mlx5_flow_namespace *ns;
-	struct mlx5_flow_root_namespace *root_ns;
 	int ret;
 
 	ns = mlx5_get_flow_namespace(dev, type);
 	if (!ns)
 		return -EINVAL;
 
-	root_ns = container_of(ns, struct mlx5_flow_root_namespace, ns);
-	ret = blocking_notifier_chain_unregister(&root_ns->rule_nh, nb);
+	ret = blocking_notifier_chain_unregister(&ns->rule_nh, nb);
 	return ret;
 }
 

@@ -462,8 +462,10 @@ static bool mlx5_is_fpga_egress_ipsec_rule(struct mlx5_core_dev *dev,
 		return ret;
 
 	if (is_dmac || is_smac ||
-	    (match_criteria_enable & (~1 << MLX5_CREATE_FLOW_GROUP_IN_MATCH_CRITERIA_ENABLE_OUTER_HEADERS)) ||
-	    (flow_act->action & ~MLX5_FLOW_CONTEXT_ACTION_ENCRYPT) ||
+	    (match_criteria_enable &
+			    ~((1 << MLX5_CREATE_FLOW_GROUP_IN_MATCH_CRITERIA_ENABLE_OUTER_HEADERS) |
+			      (1 << MLX5_CREATE_FLOW_GROUP_IN_MATCH_CRITERIA_ENABLE_MISC_PARAMETERS)))||
+	    (flow_act->action & ~(MLX5_FLOW_CONTEXT_ACTION_ENCRYPT | MLX5_FLOW_CONTEXT_ACTION_ALLOW)) ||
 	    flow_act->has_flow_tag)
 		return false;
 
@@ -535,21 +537,16 @@ int mlx5_create_ipsec_fpga(struct mlx5_fpga_device *fpga,
 	struct mlx5_accel_ipsec_ctx *accel_ctx;
 	int err;
 
-	if (!(attrs->spec.flow_act->action &
-	      (MLX5_FLOW_CONTEXT_ACTION_ENCRYPT |
-	       MLX5_FLOW_CONTEXT_ACTION_DECRYPT)))
-		return 0;
-
 	if (is_egress) {
-		if (!mlx5_is_fpga_ipsec_rule(dev, *attrs->spec.match_criteria_enable,
-					     attrs->spec.match_criteria,
-					     attrs->spec.match_value))
-			return -EINVAL;
-	} else {
 		if (!mlx5_is_fpga_egress_ipsec_rule(dev, *attrs->spec.match_criteria_enable,
 						    attrs->spec.match_criteria,
 						    attrs->spec.match_value,
 						    attrs->spec.flow_act))
+			return -EINVAL;
+	} else {
+		if (!mlx5_is_fpga_ipsec_rule(dev, *attrs->spec.match_criteria_enable,
+					     attrs->spec.match_criteria,
+					     attrs->spec.match_value))
 		return -EINVAL;
 	}
 
@@ -643,6 +640,18 @@ err:
 	return err;
 }
 
+struct fpga_ipsec_notifier_priv {
+	u32 outer_esp_spi_mask;
+	u32 outer_esp_spi_value;
+};
+
+static void destroy_fpga_ipsec_notifier_priv(struct mlx5_fs_notifiers_priv *n_priv)
+{
+	if (n_priv->fpga_ipsec_priv) {
+		kfree(n_priv->fpga_ipsec_priv);
+		n_priv->fpga_ipsec_priv = NULL;
+	}
+};
 
 int fs_rule_notifier(struct notifier_block *nb, unsigned long action,
 		     void *data, bool is_egress)
@@ -651,31 +660,86 @@ int fs_rule_notifier(struct notifier_block *nb, unsigned long action,
 		container_of(nb, struct mlx5_fpga_ipsec_notifier_block,
 			     fs_notifier);
 	struct mlx5_fpga_device *fdev = fpga_nb->fpga_device;
+	struct mlx5_core_dev *mdev = fdev->mdev;
 	struct mlx5_fs_rule_notifier_attrs *attrs = data;
 	bool is_esp = attrs->spec.flow_act->esp_aes_gcm_id;
+	char *misc_params_c = MLX5_ADDR_OF(fte_match_param, attrs->spec.match_criteria,
+			misc_parameters);
+	char *misc_params_v = MLX5_ADDR_OF(fte_match_param, attrs->spec.match_value,
+			misc_parameters);
 	int ret;
+	struct fpga_ipsec_notifier_priv *ipsec_priv =
+			attrs->notifiers_priv.fpga_ipsec_priv;
 
 	if (!is_esp)
 		return NOTIFY_DONE;
 
 	switch (action) {
 	case MLX5_FS_RULE_NOTIFY_ADD_PRE:
+		attrs->notifiers_priv.fpga_ipsec_priv = NULL;
+
+		if (!(attrs->spec.flow_act->action &
+		      (MLX5_FLOW_CONTEXT_ACTION_ENCRYPT |
+		       MLX5_FLOW_CONTEXT_ACTION_DECRYPT)))
+			break;
+
 		ret = mlx5_create_ipsec_fpga(fdev, attrs, is_egress);
 		if (ret)
 			return notifier_from_errno(ret);
+		ipsec_priv = kmalloc(sizeof(*ipsec_priv), GFP_KERNEL);
+		if (!ipsec_priv)
+			return notifier_from_errno(-ENOMEM);
+		
 		attrs->spec.flow_act->action &=
 			~(MLX5_FLOW_CONTEXT_ACTION_ENCRYPT |
 			  MLX5_FLOW_CONTEXT_ACTION_DECRYPT);
+		ipsec_priv->outer_esp_spi_mask = MLX5_GET(fte_match_set_misc, misc_params_c, outer_esp_spi);
+		ipsec_priv->outer_esp_spi_value = MLX5_GET(fte_match_set_misc, misc_params_v, outer_esp_spi);
+		attrs->notifiers_priv.fpga_ipsec_priv = ipsec_priv;
+
+		if (!MLX5_CAP_FLOWTABLE(mdev, flow_table_properties_nic_receive.ft_field_support.outer_esp_spi) && !is_egress) {
+			MLX5_SET(fte_match_set_misc, misc_params_c, outer_esp_spi, 0);
+			MLX5_SET(fte_match_set_misc, misc_params_v, outer_esp_spi, 0);
+			if (!(*misc_params_c) &&
+			    !memcmp(misc_params_c, misc_params_c + 1,
+				    MLX5_ST_SZ_BYTES(fte_match_set_misc) - 1))
+				*attrs->spec.match_criteria_enable &=
+						~(1 << MLX5_CREATE_FLOW_GROUP_IN_MATCH_CRITERIA_ENABLE_MISC_PARAMETERS);
+
+		}
 		break;
 	case MLX5_FS_RULE_NOTIFY_ADD_POST:
-		if (!attrs->success)
+		if (!ipsec_priv)
+			break;
+
+		if (!attrs->success) {
+			MLX5_SET(fte_match_set_misc, misc_params_c, outer_esp_spi,
+				 ipsec_priv->outer_esp_spi_mask);
+			MLX5_SET(fte_match_set_misc, misc_params_v, outer_esp_spi,
+				 ipsec_priv->outer_esp_spi_value);
 			mlx5_delete_ipsec_fpga(fdev, attrs);
+			destroy_fpga_ipsec_notifier_priv(&attrs->notifiers_priv);
+		}
 		attrs->spec.flow_act->action |= is_egress ?
 			MLX5_FLOW_CONTEXT_ACTION_ENCRYPT :
 			MLX5_FLOW_CONTEXT_ACTION_DECRYPT;
 		break;
-	case MLX5_FS_RULE_NOTIFY_DEL_POST:
+	case MLX5_FS_RULE_NOTIFY_DEL:
+		if (!ipsec_priv)
+			break;
+
+		MLX5_SET(fte_match_set_misc, misc_params_c, outer_esp_spi,
+			 ipsec_priv->outer_esp_spi_mask);
+		MLX5_SET(fte_match_set_misc, misc_params_v, outer_esp_spi,
+			 ipsec_priv->outer_esp_spi_value);
+		attrs->spec.flow_act->action |= is_egress ?
+				MLX5_FLOW_CONTEXT_ACTION_ENCRYPT :
+				MLX5_FLOW_CONTEXT_ACTION_DECRYPT;
 		mlx5_delete_ipsec_fpga(fdev, attrs);
+		destroy_fpga_ipsec_notifier_priv(&attrs->notifiers_priv);
+		attrs->spec.flow_act->action &=
+				~(MLX5_FLOW_CONTEXT_ACTION_ENCRYPT |
+				  MLX5_FLOW_CONTEXT_ACTION_DECRYPT);
 		break;
 	}
 
