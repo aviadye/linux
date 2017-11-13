@@ -1420,7 +1420,7 @@ static struct ib_ucontext *mlx5_ib_alloc_ucontext(struct ib_device *ibdev,
 			resp.xfrm_flags |= MLX5_USER_ALLOC_UCONTEXT_XFRM_FLAGS_ESP_AES_GCM_REQ_METADATA;
 		if (mlx5_get_flow_namespace(dev->mdev, MLX5_FLOW_NAMESPACE_EGRESS))
 			resp.xfrm_flags |= MLX5_USER_ALLOC_UCONTEXT_XFRM_FLAGS_ESP_AES_GCM_TX;
-		if (MLX5_CAP_FLOWTABLE(dev->mdev, flow_table_properties_nic_receive.ft_field_support.outer_esp_spi))
+		if (!MLX5_CAP_FLOWTABLE(dev->mdev, flow_table_properties_nic_receive.ft_field_support.outer_esp_spi))
 			resp.xfrm_flags |= MLX5_USER_ALLOC_UCONTEXT_XFRM_FLAGS_ESP_AES_GCM_SPI_RSS_ONLY;
 	}
 
