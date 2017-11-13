@@ -131,7 +131,7 @@ static int (*uverbs_ex_cmd_table[])(struct ib_uverbs_file *file,
 	[IB_USER_VERBS_EX_CMD_MODIFY_CQ]        = ib_uverbs_ex_modify_cq,
 	[IB_USER_VERBS_EX_CMD_CREATE_ACTION_XFRM] = ib_uverbs_ex_create_action_xfrm,
 	[IB_USER_VERBS_EX_CMD_DESTROY_ACTION_XFRM] = ib_uverbs_ex_destroy_action_xfrm,
-	//Modify?
+	[IB_USER_VERBS_EX_CMD_MODIFY_ACTION_XFRM] = ib_uverbs_ex_modify_action_xfrm,
 };
 
 static void ib_uverbs_add_one(struct ib_device *device);
