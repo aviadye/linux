@@ -35,6 +35,7 @@
 #include <linux/mlx5/driver.h>
 #include <linux/mlx5/fs_helpers.h>
 #include <linux/mlx5/fs.h>
+#include <linux/rbtree.h>
 
 #include "fs_core.h"
 #include "fs_cmd.h"
@@ -79,6 +80,16 @@ struct mlx5_fpga_ipsec_notifier_block {
 	struct mlx5_fpga_device		*fpga_device;
 };
 
+struct ipsec_rule {
+	struct rb_node	node;
+	struct		mlx5_flow_table *ft;
+	struct mlx5_accel_ipsec_ctx *accel_ctx;
+	int		id;
+	u32 action;
+	u32 outer_esp_spi_mask;
+	u32 outer_esp_spi_value;
+};
+
 struct mlx5_fpga_ipsec {
 	struct list_head pending_cmds;
 	spinlock_t pending_cmds_lock; /* Protects pending_cmds */
@@ -89,6 +100,7 @@ struct mlx5_fpga_ipsec {
 	struct rhashtable sa_hash;
 	/* lock for sa hash */
 	struct mutex sa_hash_lock;
+	struct rb_root	rules;
 };
 
 struct mlx5_fpga_ipsec_sa_ctx {
@@ -350,7 +362,7 @@ out:
 	return ret;
 }
 
-static void mlx5_fs_ipsec_build_hw_sa(struct mlx5_core_dev *dev, u32 op,
+static void mlx5_fs_ipsec_build_hw_sa(struct mlx5_core_dev *dev,
 				      struct mlx5_fs_rule_notifier_attrs *attrs,
 				      struct mlx5_accel_ipsec_ctx *accel_ctx,
 				      struct mlx5_accel_ipsec_sa *hw_sa)
@@ -358,16 +370,13 @@ static void mlx5_fs_ipsec_build_hw_sa(struct mlx5_core_dev *dev, u32 op,
 	struct mlx5_accel_xfrm_ipsec_attrs *esp_aes_gcm = &accel_ctx->attrs;
 	memset(hw_sa, 0, sizeof(*hw_sa));
 
-	if (op == MLX5_IPSEC_CMD_ADD_SA) {
-		memcpy(&hw_sa->key_enc, esp_aes_gcm->key,
+	memcpy(&hw_sa->key_enc, esp_aes_gcm->key, esp_aes_gcm->key_length);
+	if (esp_aes_gcm->key_length == 16)
+		memcpy(&hw_sa->key_enc[16], esp_aes_gcm->key,
 		       esp_aes_gcm->key_length);
-		if (esp_aes_gcm->key_length == 16)
-			memcpy(&hw_sa->key_enc[16], esp_aes_gcm->key,
-			       esp_aes_gcm->key_length);
-		hw_sa->gcm.salt = *((__be32 *)esp_aes_gcm->salt);
-	}
+	hw_sa->gcm.salt = *((__be32 *)esp_aes_gcm->salt);
 
-	hw_sa->cmd = htonl(op);
+	hw_sa->cmd = htonl(MLX5_IPSEC_CMD_DEL_SA);
 	hw_sa->flags |= MLX5_IPSEC_SADB_SA_VALID | MLX5_IPSEC_SADB_SPI_EN;
 	if (mlx5_fs_is_outer_ipv4_flow(dev, attrs->spec.match_criteria, attrs->spec.match_value)) {
 		memcpy(&hw_sa->sip[3],
@@ -563,8 +572,7 @@ int mlx5_create_ipsec_fpga(struct mlx5_fpga_device *fpga,
 	if (!sa_ctx)
 		return -ENOMEM;
 
-	mlx5_fs_ipsec_build_hw_sa(dev, MLX5_IPSEC_CMD_ADD_SA, attrs, accel_ctx,
-				  &sa_ctx->hw_sa);
+	mlx5_fs_ipsec_build_hw_sa(dev, attrs, accel_ctx, &sa_ctx->hw_sa);
 
 	mutex_lock(&fipsec->sa_hash_lock);
 	sa_ctx_exist = rhashtable_lookup_fast(&fipsec->sa_hash, &sa_ctx->hash,
@@ -613,18 +621,16 @@ static void release_sa_ctx(struct kref *ref)
 }
 
 int mlx5_delete_ipsec_fpga(struct mlx5_fpga_device *fpga,
-			   struct mlx5_fs_rule_notifier_attrs *attrs)
+			   struct mlx5_fs_rule_notifier_attrs *attrs,
+			   struct mlx5_accel_ipsec_ctx *accel_ctx)
 {
 	struct mlx5_accel_ipsec_sa hw_sa;
 	struct mlx5_fpga_ipsec_sa_ctx *sa_ctx;
 	struct mlx5_core_dev *dev = fpga->mdev;
 	struct mlx5_fpga_ipsec *fipsec = fpga->ipsec;
-	struct mlx5_accel_ipsec_ctx *accel_ctx;
 	int err = 0;
 
-	accel_ctx = (struct mlx5_accel_ipsec_ctx *)attrs->spec.flow_act->esp_aes_gcm_id;
-	mlx5_fs_ipsec_build_hw_sa(dev, MLX5_IPSEC_CMD_ADD_SA, attrs, accel_ctx,
-				  &hw_sa);
+	mlx5_fs_ipsec_build_hw_sa(dev, attrs, accel_ctx, &hw_sa);
 
 	mutex_lock(&fipsec->sa_hash_lock);
 	sa_ctx = rhashtable_lookup_fast(&fipsec->sa_hash, &hw_sa,
@@ -640,18 +646,90 @@ err:
 	return err;
 }
 
-struct fpga_ipsec_notifier_priv {
-	u32 outer_esp_spi_mask;
-	u32 outer_esp_spi_value;
-};
-
-static void destroy_fpga_ipsec_notifier_priv(struct mlx5_fs_notifiers_priv *n_priv)
+static int compare_keys(struct mlx5_flow_table *ft1, int id1,
+			struct mlx5_flow_table *ft2, int id2)
 {
-	if (n_priv->fpga_ipsec_priv) {
-		kfree(n_priv->fpga_ipsec_priv);
-		n_priv->fpga_ipsec_priv = NULL;
+	if (ft1 < ft2 || (ft1 == ft2 && id1 < id2))
+		return -1;
+
+	if (ft1 > ft2 || (ft1 == ft2 && id1 > id2))
+		return 1;
+
+	return 0;
+}
+
+struct ipsec_rule *rule_search(struct rb_root *root, struct mlx5_flow_table *ft,
+			       int id)
+{
+	struct rb_node *node = root->rb_node;
+
+	while (node) {
+		struct ipsec_rule *rule = container_of(node, struct ipsec_rule,
+						       node);
+		int result;
+
+		result = compare_keys(rule->ft, rule->id, ft, id);
+		if (result < 0)
+			node = node->rb_left;
+		else if (result > 0)
+			node = node->rb_right;
+		else
+			return rule;
 	}
-};
+	return NULL;
+}
+
+int rule_insert(struct rb_root *root, struct ipsec_rule *rule)
+{
+	struct rb_node **new = &(root->rb_node), *parent = NULL;
+
+	/* Figure out where to put new node */
+	while (*new) {
+		struct ipsec_rule *this =
+			container_of(*new, struct ipsec_rule, node);
+		int result = compare_keys(rule->ft, rule->id,
+					  this->ft, this->id);
+
+		parent = *new;
+		if (result < 0)
+			new = &((*new)->rb_left);
+		else if (result > 0)
+			new = &((*new)->rb_right);
+		else
+			return -EEXIST;
+	}
+
+	/* Add new node and rebalance tree. */
+	rb_link_node(&rule->node, parent, new);
+	rb_insert_color(&rule->node, root);
+
+	return 0;
+}
+
+int rule_delete(struct rb_root *root, struct ipsec_rule *rule)
+{
+	if (rule) {
+		rb_erase(&rule->node, root);
+		kfree(rule);
+		return 0;
+	}
+	return -ENOENT;
+}
+
+void restore_spec_mailbox(struct ipsec_rule *rule, struct mlx5_fs_rule_notifier_attrs *attrs)
+{
+	char *misc_params_c = MLX5_ADDR_OF(fte_match_param, attrs->spec.match_criteria,
+			misc_parameters);
+	char *misc_params_v = MLX5_ADDR_OF(fte_match_param, attrs->spec.match_value,
+			misc_parameters);
+
+	MLX5_SET(fte_match_set_misc, misc_params_c, outer_esp_spi,
+		 rule->outer_esp_spi_mask);
+	MLX5_SET(fte_match_set_misc, misc_params_v, outer_esp_spi,
+		 rule->outer_esp_spi_value);
+	attrs->spec.flow_act->action |= rule->action;
+	attrs->spec.flow_act->esp_aes_gcm_id = (uintptr_t)rule->accel_ctx;
+}
 
 int fs_rule_notifier(struct notifier_block *nb, unsigned long action,
 		     void *data, bool is_egress)
@@ -660,6 +738,7 @@ int fs_rule_notifier(struct notifier_block *nb, unsigned long action,
 		container_of(nb, struct mlx5_fpga_ipsec_notifier_block,
 			     fs_notifier);
 	struct mlx5_fpga_device *fdev = fpga_nb->fpga_device;
+	struct mlx5_fpga_ipsec *ipsec = fdev->ipsec;
 	struct mlx5_core_dev *mdev = fdev->mdev;
 	struct mlx5_fs_rule_notifier_attrs *attrs = data;
 	bool is_esp = attrs->spec.flow_act->esp_aes_gcm_id;
@@ -668,36 +747,41 @@ int fs_rule_notifier(struct notifier_block *nb, unsigned long action,
 	char *misc_params_v = MLX5_ADDR_OF(fte_match_param, attrs->spec.match_value,
 			misc_parameters);
 	int ret;
-	struct fpga_ipsec_notifier_priv *ipsec_priv =
-			attrs->notifiers_priv.fpga_ipsec_priv;
-
-	if (!is_esp)
-		return NOTIFY_DONE;
+	struct ipsec_rule *rule;
 
 	switch (action) {
 	case MLX5_FS_RULE_NOTIFY_ADD_PRE:
-		attrs->notifiers_priv.fpga_ipsec_priv = NULL;
-
-		if (!(attrs->spec.flow_act->action &
+		if (!is_esp ||
+		    !(attrs->spec.flow_act->action &
 		      (MLX5_FLOW_CONTEXT_ACTION_ENCRYPT |
 		       MLX5_FLOW_CONTEXT_ACTION_DECRYPT)))
-			break;
+			return NOTIFY_DONE;
 
 		ret = mlx5_create_ipsec_fpga(fdev, attrs, is_egress);
 		if (ret)
 			return notifier_from_errno(ret);
-		ipsec_priv = kmalloc(sizeof(*ipsec_priv), GFP_KERNEL);
-		if (!ipsec_priv)
-			return notifier_from_errno(-ENOMEM);
-		
-		attrs->spec.flow_act->action &=
-			~(MLX5_FLOW_CONTEXT_ACTION_ENCRYPT |
-			  MLX5_FLOW_CONTEXT_ACTION_DECRYPT);
-		ipsec_priv->outer_esp_spi_mask = MLX5_GET(fte_match_set_misc, misc_params_c, outer_esp_spi);
-		ipsec_priv->outer_esp_spi_value = MLX5_GET(fte_match_set_misc, misc_params_v, outer_esp_spi);
-		attrs->notifiers_priv.fpga_ipsec_priv = ipsec_priv;
 
-		if (!MLX5_CAP_FLOWTABLE(mdev, flow_table_properties_nic_receive.ft_field_support.outer_esp_spi) && !is_egress) {
+		rule = kzalloc(sizeof(*rule), GFP_KERNEL);
+		rule->ft = attrs->ft;
+		rule->id = attrs->id;
+		rule->action = attrs->spec.flow_act->action &
+			(MLX5_FLOW_CONTEXT_ACTION_ENCRYPT |
+			 MLX5_FLOW_CONTEXT_ACTION_DECRYPT);
+		rule->accel_ctx = (struct mlx5_accel_ipsec_ctx *)attrs->spec.flow_act->esp_aes_gcm_id;
+		rule->outer_esp_spi_mask = MLX5_GET(fte_match_set_misc, misc_params_c, outer_esp_spi);
+		rule->outer_esp_spi_value = MLX5_GET(fte_match_set_misc, misc_params_v, outer_esp_spi);
+		ret = rule_insert(&ipsec->rules, rule);
+		if (ret) {
+			mlx5_fpga_warn(fdev, "ipsec: couldn't insert rule with id %d\n", attrs->id);
+			kfree(rule);
+			return notifier_from_errno(ret);
+		}
+
+		attrs->spec.flow_act->action &= ~rule->action;
+		attrs->spec.flow_act->esp_aes_gcm_id = 0;
+		if (!MLX5_CAP_FLOWTABLE(mdev,
+					flow_table_properties_nic_receive.ft_field_support.outer_esp_spi) &&
+		    !is_egress) {
 			MLX5_SET(fte_match_set_misc, misc_params_c, outer_esp_spi, 0);
 			MLX5_SET(fte_match_set_misc, misc_params_v, outer_esp_spi, 0);
 			if (!(*misc_params_c) &&
@@ -709,37 +793,24 @@ int fs_rule_notifier(struct notifier_block *nb, unsigned long action,
 		}
 		break;
 	case MLX5_FS_RULE_NOTIFY_ADD_POST:
-		if (!ipsec_priv)
+		rule = rule_search(&ipsec->rules, attrs->ft, attrs->id);
+		if (!rule)
 			break;
 
+		restore_spec_mailbox(rule, attrs);
 		if (!attrs->success) {
-			MLX5_SET(fte_match_set_misc, misc_params_c, outer_esp_spi,
-				 ipsec_priv->outer_esp_spi_mask);
-			MLX5_SET(fte_match_set_misc, misc_params_v, outer_esp_spi,
-				 ipsec_priv->outer_esp_spi_value);
-			mlx5_delete_ipsec_fpga(fdev, attrs);
-			destroy_fpga_ipsec_notifier_priv(&attrs->notifiers_priv);
+			mlx5_delete_ipsec_fpga(fdev, attrs, rule->accel_ctx);
+			rule_delete(&ipsec->rules, rule);
 		}
-		attrs->spec.flow_act->action |= is_egress ?
-			MLX5_FLOW_CONTEXT_ACTION_ENCRYPT :
-			MLX5_FLOW_CONTEXT_ACTION_DECRYPT;
 		break;
 	case MLX5_FS_RULE_NOTIFY_DEL:
-		if (!ipsec_priv)
+		rule = rule_search(&ipsec->rules, attrs->ft, attrs->id);
+		if (!rule)
 			break;
 
-		MLX5_SET(fte_match_set_misc, misc_params_c, outer_esp_spi,
-			 ipsec_priv->outer_esp_spi_mask);
-		MLX5_SET(fte_match_set_misc, misc_params_v, outer_esp_spi,
-			 ipsec_priv->outer_esp_spi_value);
-		attrs->spec.flow_act->action |= is_egress ?
-				MLX5_FLOW_CONTEXT_ACTION_ENCRYPT :
-				MLX5_FLOW_CONTEXT_ACTION_DECRYPT;
-		mlx5_delete_ipsec_fpga(fdev, attrs);
-		destroy_fpga_ipsec_notifier_priv(&attrs->notifiers_priv);
-		attrs->spec.flow_act->action &=
-				~(MLX5_FLOW_CONTEXT_ACTION_ENCRYPT |
-				  MLX5_FLOW_CONTEXT_ACTION_DECRYPT);
+		restore_spec_mailbox(rule, attrs);
+		mlx5_delete_ipsec_fpga(fdev, attrs, rule->accel_ctx);
+		rule_delete(&ipsec->rules, rule);
 		break;
 	}
 
@@ -813,6 +884,7 @@ int mlx5_fpga_ipsec_init(struct mlx5_core_dev *mdev)
 		goto error1;
 	}
 
+	fdev->ipsec->rules = RB_ROOT;
 	init_attr.rx_size = SBU_QP_QUEUE_SIZE;
 	init_attr.tx_size = SBU_QP_QUEUE_SIZE;
 	init_attr.recv_cb = mlx5_fpga_ipsec_recv;
@@ -844,6 +916,16 @@ error:
 	return err;
 }
 
+void destroy_rules_rb(struct rb_root *root)
+{
+	struct ipsec_rule *r, *tmp;
+
+	rbtree_postorder_for_each_entry_safe(r, tmp, root, node) {
+		rb_erase(&r->node, root);
+		kfree(r);
+	}
+}
+
 void mlx5_fpga_ipsec_cleanup(struct mlx5_core_dev *mdev)
 {
 	struct mlx5_fpga_device *fdev = mdev->fpga;
@@ -855,6 +937,7 @@ void mlx5_fpga_ipsec_cleanup(struct mlx5_core_dev *mdev)
 						 &fdev->ipsec->fs_notifier_egress.fs_notifier));
 	WARN_ON(mlx5_fs_rule_notifier_unregister(mdev, MLX5_FLOW_NAMESPACE_BYPASS,
 						 &fdev->ipsec->fs_notifier_ingress.fs_notifier));
+	destroy_rules_rb(&fdev->ipsec->rules);
 	mlx5_fpga_sbu_conn_destroy(fdev->ipsec->conn);
 	rhashtable_destroy(&fdev->ipsec->sa_hash);
 	kfree(fdev->ipsec);

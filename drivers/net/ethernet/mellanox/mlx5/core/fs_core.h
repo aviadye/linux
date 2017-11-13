@@ -105,8 +105,7 @@ struct mlx5_flow_rule {
 
 struct mlx5_flow_handle {
 	int num_rules;
-	/* TODO: MB: Move to rule? */
-	struct mlx5_fs_notifiers_priv 		notifiers_priv;
+	int id;
 	struct mlx5_flow_rule *rule[];
 };
 
@@ -130,6 +129,7 @@ struct mlx5_flow_table {
 	struct list_head		fwd_rules;
 	u32				flags;
 	struct rhltable			fgs_hash;
+	struct ida			notifiers_ida;
 };
 
 struct mlx5_fc_cache {
