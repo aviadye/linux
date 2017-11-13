@@ -376,7 +376,7 @@ static void mlx5_fs_ipsec_build_hw_sa(struct mlx5_core_dev *dev,
 		       esp_aes_gcm->key_length);
 	hw_sa->gcm.salt = *((__be32 *)esp_aes_gcm->salt);
 
-	hw_sa->cmd = htonl(MLX5_IPSEC_CMD_DEL_SA);
+	hw_sa->cmd = htonl(MLX5_IPSEC_CMD_ADD_SA);
 	hw_sa->flags |= MLX5_IPSEC_SADB_SA_VALID | MLX5_IPSEC_SADB_SPI_EN;
 	if (mlx5_fs_is_outer_ipv4_flow(dev, attrs->spec.match_criteria, attrs->spec.match_value)) {
 		memcpy(&hw_sa->sip[3],
@@ -668,7 +668,7 @@ struct ipsec_rule *rule_search(struct rb_root *root, struct mlx5_flow_table *ft,
 						       node);
 		int result;
 
-		result = compare_keys(rule->ft, rule->id, ft, id);
+		result = compare_keys(ft, id, rule->ft, rule->id);
 		if (result < 0)
 			node = node->rb_left;
 		else if (result > 0)
@@ -757,11 +757,16 @@ int fs_rule_notifier(struct notifier_block *nb, unsigned long action,
 		       MLX5_FLOW_CONTEXT_ACTION_DECRYPT)))
 			return NOTIFY_DONE;
 
-		ret = mlx5_create_ipsec_fpga(fdev, attrs, is_egress);
-		if (ret)
-			return notifier_from_errno(ret);
-
 		rule = kzalloc(sizeof(*rule), GFP_KERNEL);
+		if (!rule)
+			return notifier_from_errno(-ENOMEM);
+
+		ret = mlx5_create_ipsec_fpga(fdev, attrs, is_egress);
+		if (ret) {
+			kfree(rule);
+			return notifier_from_errno(ret);
+		}
+
 		rule->ft = attrs->ft;
 		rule->id = attrs->id;
 		rule->action = attrs->spec.flow_act->action &
@@ -770,12 +775,7 @@ int fs_rule_notifier(struct notifier_block *nb, unsigned long action,
 		rule->accel_ctx = (struct mlx5_accel_ipsec_ctx *)attrs->spec.flow_act->esp_aes_gcm_id;
 		rule->outer_esp_spi_mask = MLX5_GET(fte_match_set_misc, misc_params_c, outer_esp_spi);
 		rule->outer_esp_spi_value = MLX5_GET(fte_match_set_misc, misc_params_v, outer_esp_spi);
-		ret = rule_insert(&ipsec->rules, rule);
-		if (ret) {
-			mlx5_fpga_warn(fdev, "ipsec: couldn't insert rule with id %d\n", attrs->id);
-			kfree(rule);
-			return notifier_from_errno(ret);
-		}
+		WARN_ON(rule_insert(&ipsec->rules, rule));
 
 		attrs->spec.flow_act->action &= ~rule->action;
 		attrs->spec.flow_act->esp_aes_gcm_id = 0;

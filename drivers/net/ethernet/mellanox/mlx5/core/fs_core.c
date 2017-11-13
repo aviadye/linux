@@ -1915,10 +1915,10 @@ search_again_locked:
 err_release_fg:
 	up_write_ref_node(&g->node);
 	tree_put_node(&g->node);
+err_notifier:
 	call_notifiers_chain(&notifier_attrs, &ft->node,
 			     MLX5_FS_RULE_NOTIFY_ADD_POST, false,
 			     CALL_NOTIFIERS_CHAIN_CONTINUE_ON_ERR);
-err_notifier:
 	ida_simple_remove(&ft->notifiers_ida, id);
 err_id:
 	return ERR_PTR(err);
