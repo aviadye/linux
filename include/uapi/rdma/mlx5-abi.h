@@ -104,9 +104,10 @@ enum mlx5_user_inline_mode {
 };
 
 enum {
-	MLX5_USER_ALLOC_UCONTEXT_FLAGS_FS_ESP_AES_GCM_REQ_METADATA = 1U << 0,
-	MLX5_USER_ALLOC_UCONTEXT_FLAGS_FS_ESP_AES_GCM_RX = 1U << 1,
-	MLX5_USER_ALLOC_UCONTEXT_FLAGS_FS_ESP_AES_GCM_TX = 1U << 2,
+	MLX5_USER_ALLOC_UCONTEXT_XFRM_FLAGS_ESP_AES_GCM_REQ_METADATA = 1U << 0,
+	MLX5_USER_ALLOC_UCONTEXT_XFRM_FLAGS_ESP_AES_GCM_RX = 1U << 1,
+	MLX5_USER_ALLOC_UCONTEXT_XFRM_FLAGS_ESP_AES_GCM_TX = 1U << 2,
+	MLX5_USER_ALLOC_UCONTEXT_XFRM_FLAGS_ESP_AES_GCM_SPI_RSS_ONLY = 1U << 3,
 };
 
 struct mlx5_ib_alloc_ucontext_resp {
@@ -120,7 +121,7 @@ struct mlx5_ib_alloc_ucontext_resp {
 	__u32	max_recv_wr;
 	__u32	max_srq_recv_wr;
 	__u16	num_ports;
-	__u16	flags;
+	__u16	xfrm_flags;
 	__u32	comp_mask;
 	__u32	response_length;
 	__u8	cqe_version;
