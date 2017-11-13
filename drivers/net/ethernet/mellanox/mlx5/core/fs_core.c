@@ -1189,28 +1189,6 @@ static void destroy_flow_handle(struct fs_fte *fte,
 				struct mlx5_flow_destination *dest,
 				int i)
 {
-	struct mlx5_fs_rule_notifier_attrs notifier_attrs;
-	struct mlx5_flow_namespace *ns;
-	struct mlx5_flow_table *ft;
-	struct mlx5_flow_group *fg;
-	struct fs_prio *prio;
-
-	fs_get_obj(fg, fte->node.parent);
-	fs_get_obj(ft, fg->node.parent);
-	fs_get_obj(prio, ft->node.parent);
-	fs_get_obj(ns, prio->node.parent);
-	notifier_attrs.ft = ft;
-	notifier_attrs.spec.match_criteria_enable = &fg->mask.match_criteria_enable;
-	notifier_attrs.spec.match_criteria = fg->mask.match_criteria;
-	notifier_attrs.spec.match_value = fte->val;
-	notifier_attrs.spec.flow_act = &fte->action;
-	notifier_attrs.success = true;
-	memcpy(&notifier_attrs.notifiers_priv, &handle->notifiers_priv,
-	       sizeof(notifier_attrs.notifiers_priv));
-
-	blocking_notifier_call_chain(&ns->rule_nh, MLX5_FS_RULE_NOTIFY_DEL,
-				     &notifier_attrs);
-
 	for (; --i >= 0;) {
 		if (atomic_dec_and_test(&handle->rule[i]->node.refcount)) {
 			fte->dests_size--;
@@ -1927,6 +1905,32 @@ EXPORT_SYMBOL(mlx5_add_flow_rules);
 void mlx5_del_flow_rules(struct mlx5_flow_handle *handle)
 {
 	int i;
+	struct mlx5_fs_rule_notifier_attrs notifier_attrs;
+	struct mlx5_flow_namespace *ns;
+	struct mlx5_flow_table *ft;
+	struct mlx5_flow_group *fg;
+	struct fs_prio *prio;
+	struct fs_fte *fte;
+
+	if (!handle->num_rules)
+		return;
+
+	fs_get_obj(fte, handle->rule[0]->node.parent);
+	fs_get_obj(fg, fte->node.parent);
+	fs_get_obj(ft, fg->node.parent);
+	fs_get_obj(prio, ft->node.parent);
+	fs_get_obj(ns, prio->node.parent);
+	notifier_attrs.ft = ft;
+	notifier_attrs.spec.match_criteria_enable = &fg->mask.match_criteria_enable;
+	notifier_attrs.spec.match_criteria = fg->mask.match_criteria;
+	notifier_attrs.spec.match_value = fte->val;
+	notifier_attrs.spec.flow_act = &fte->action;
+	notifier_attrs.success = true;
+	memcpy(&notifier_attrs.notifiers_priv, &handle->notifiers_priv,
+	       sizeof(notifier_attrs.notifiers_priv));
+
+	blocking_notifier_call_chain(&ns->rule_nh, MLX5_FS_RULE_NOTIFY_DEL,
+				     &notifier_attrs);
 
 	for (i = handle->num_rules - 1; i >= 0; i--)
 		tree_remove_node(&handle->rule[i]->node);
