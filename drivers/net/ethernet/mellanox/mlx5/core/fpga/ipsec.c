@@ -285,9 +285,12 @@ u32 mlx5_fpga_ipsec_device_caps(struct mlx5_core_dev *mdev)
 		ret |= MLX5_ACCEL_IPSEC_DEVICE;
 	else
 		return ret;
+	mlx5_fpga_err(fdev, "HMR: %s:%d\n", __func__, __LINE__);
+
 
 	if (!fdev->ipsec)
 		return ret;
+	mlx5_fpga_err(fdev, "HMR: %s:%d\n", __func__, __LINE__);
 
 	ret |= MLX5_ACCEL_IPSEC_REQUIRE_METADATA;
 
@@ -418,6 +421,8 @@ static void mlx5_fs_ipsec_build_hw_sa(struct mlx5_core_dev *dev,
 
 	if (attrs->spec.flow_act->action & MLX5_FLOW_CONTEXT_ACTION_ENCRYPT)
 		hw_sa->flags |= MLX5_IPSEC_SADB_DIR_SX;
+
+	print_hex_dump(KERN_ERR, "fs_hw_sa: ", DUMP_PREFIX_OFFSET, 32, 4, hw_sa, sizeof(*hw_sa), false);
 }
 
 static bool mlx5_is_fpga_ipsec_rule(struct mlx5_core_dev *dev,
@@ -430,6 +435,7 @@ static bool mlx5_is_fpga_ipsec_rule(struct mlx5_core_dev *dev,
 
 	ipv6_flow = mlx5_fs_is_outer_ipv6_flow(dev, match_c, match_v);
 
+	pr_err("HMR: %s:%d\n", __func__, __LINE__);
 	if (!(match_criteria_enable & 1 << MLX5_CREATE_FLOW_GROUP_IN_MATCH_CRITERIA_ENABLE_OUTER_HEADERS) ||
 	    mlx5_fs_is_outer_udp_flow(match_c, match_v) ||
 	    mlx5_fs_is_outer_tcp_flow(match_c, match_v) ||
@@ -438,16 +444,20 @@ static bool mlx5_is_fpga_ipsec_rule(struct mlx5_core_dev *dev,
 	      ipv6_flow))
 		return false;
 
+	pr_err("HMR: %s:%d\n", __func__, __LINE__);
 	if (!(ipsec_dev_caps & MLX5_ACCEL_IPSEC_DEVICE))
 		return false;
 
+	pr_err("HMR: %s:%d\n", __func__, __LINE__);
 	if (!(ipsec_dev_caps & MLX5_ACCEL_IPSEC_ESP) &&
 	    mlx5_fs_is_ipsec_flow(match_c))
 		return false;
 
+	pr_err("HMR: %s:%d\n", __func__, __LINE__);
 	if (!(ipsec_dev_caps & MLX5_ACCEL_IPSEC_IPV6) &&
 	    ipv6_flow)
 		return false;
+	pr_err("HMR: %s:%d\n", __func__, __LINE__);
 
 	return true;
 }
@@ -466,9 +476,15 @@ static bool mlx5_is_fpga_egress_ipsec_rule(struct mlx5_core_dev *dev,
 		MLX5_GET(fte_match_set_lyr_2_4, outer_c, smac_15_0);
 	int ret;
 
+	pr_err("HMR: dmac: %x %x\n", MLX5_GET(fte_match_set_lyr_2_4, outer_c, dmac_47_16),
+			MLX5_GET(fte_match_set_lyr_2_4, outer_c, dmac_15_0));
+	pr_err("HMR: smac: %x %x\n", MLX5_GET(fte_match_set_lyr_2_4, outer_c, smac_47_16),
+				MLX5_GET(fte_match_set_lyr_2_4, outer_c, smac_15_0));
 	ret = mlx5_is_fpga_ipsec_rule(dev, match_criteria_enable, match_c, match_v);
 	if (!ret)
 		return ret;
+
+	pr_err("HMR: match_criteria %x action %x flow_tag: %d\n", match_criteria_enable, flow_act->action, flow_act->has_flow_tag);
 
 	if (is_dmac || is_smac ||
 	    (match_criteria_enable &
@@ -478,6 +494,7 @@ static bool mlx5_is_fpga_egress_ipsec_rule(struct mlx5_core_dev *dev,
 	    flow_act->has_flow_tag)
 		return false;
 
+	pr_err("HMR: %s:%d\n", __func__, __LINE__);
 	return true;
 }
 
@@ -546,24 +563,29 @@ int mlx5_create_ipsec_fpga(struct mlx5_fpga_device *fpga,
 	struct mlx5_accel_ipsec_ctx *accel_ctx;
 	int err;
 
+	pr_err("HMR: %s:%d\n", __func__, __LINE__);
 	if (is_egress) {
+		pr_err("HMR: %s:%d\n", __func__, __LINE__);
 		if (!mlx5_is_fpga_egress_ipsec_rule(dev, *attrs->spec.match_criteria_enable,
 						    attrs->spec.match_criteria,
 						    attrs->spec.match_value,
 						    attrs->spec.flow_act))
 			return -EINVAL;
 	} else {
+		pr_err("HMR: %s:%d\n", __func__, __LINE__);
 		if (!mlx5_is_fpga_ipsec_rule(dev, *attrs->spec.match_criteria_enable,
 					     attrs->spec.match_criteria,
 					     attrs->spec.match_value))
 		return -EINVAL;
 	}
 
+	pr_err("HMR: %s:%d\n", __func__, __LINE__);
 	if (!attrs->spec.flow_act->esp_aes_gcm_id)
 		return -EINVAL;
 
 	accel_ctx = (struct mlx5_accel_ipsec_ctx *)attrs->spec.flow_act->esp_aes_gcm_id;
 
+	pr_err("HMR: %s:%d\n", __func__, __LINE__);
 	if (!validate_fpga_full_mask(dev, attrs->spec.match_criteria,
 				     attrs->spec.match_value))
 		return -EINVAL;
@@ -578,11 +600,13 @@ int mlx5_create_ipsec_fpga(struct mlx5_fpga_device *fpga,
 	sa_ctx_exist = rhashtable_lookup_fast(&fipsec->sa_hash, &sa_ctx->hash,
 					       rhash_sa);
 	if (sa_ctx_exist) {
+		pr_err("HMR kref_get\n");
 		kref_get(&sa_ctx->ref);
 		err = 0;
 		goto err_free;
 	}
 
+	pr_err("HMR kref_init\n");
 	kref_init(&sa_ctx->ref);
 	sa_ctx->dev = dev;
 	err = rhashtable_lookup_insert_fast(&fipsec->sa_hash, &sa_ctx->hash,
@@ -610,6 +634,7 @@ static void release_sa_ctx(struct kref *ref)
 		container_of(ref, struct mlx5_fpga_ipsec_sa_ctx, ref);
 	struct mlx5_fpga_ipsec *fipsec = sa_ctx->dev->fpga->ipsec;;
 
+	pr_err("HMR release_sa_ctx\n");
 	WARN_ON(rhashtable_remove_fast(&fipsec->sa_hash, &sa_ctx->hash,
 				       rhash_sa));
 	sa_ctx->hw_sa.cmd = htonl(MLX5_IPSEC_CMD_DEL_SA);
@@ -640,6 +665,7 @@ int mlx5_delete_ipsec_fpga(struct mlx5_fpga_device *fpga,
 		goto err;
 	}
 
+	pr_err("HMR kref_put\n");
 	kref_put(&sa_ctx->ref, release_sa_ctx);
 err:
 	mutex_unlock(&fipsec->sa_hash_lock);
@@ -669,13 +695,20 @@ struct ipsec_rule *rule_search(struct rb_root *root, struct mlx5_flow_table *ft,
 		int result;
 
 		result = compare_keys(ft, id, rule->ft, rule->id);
-		if (result < 0)
+		if (result < 0) {
+			pr_err("search left\n");
 			node = node->rb_left;
-		else if (result > 0)
+		}
+		else if (result > 0) {
+			pr_err("search left\n");
 			node = node->rb_right;
-		else
+		}
+		else {
+			pr_err("search match\n");
 			return rule;
+		}
 	}
+	pr_err("%s:%d Couldn't find rule\n", __func__, __LINE__);
 	return NULL;
 }
 
@@ -683,6 +716,7 @@ int rule_insert(struct rb_root *root, struct ipsec_rule *rule)
 {
 	struct rb_node **new = &(root->rb_node), *parent = NULL;
 
+	pr_err("in insert\n");
 	/* Figure out where to put new node */
 	while (*new) {
 		struct ipsec_rule *this =
@@ -691,12 +725,18 @@ int rule_insert(struct rb_root *root, struct ipsec_rule *rule)
 					  this->ft, this->id);
 
 		parent = *new;
-		if (result < 0)
+		if (result < 0) {
+			pr_err("insert left\n");
 			new = &((*new)->rb_left);
-		else if (result > 0)
+		}
+		else if (result > 0) {
+			pr_err("search right\n");
 			new = &((*new)->rb_right);
-		else
+		}
+		else {
+			pr_err("search exists\n");
 			return -EEXIST;
+		}
 	}
 
 	/* Add new node and rebalance tree. */
@@ -749,8 +789,11 @@ int fs_rule_notifier(struct notifier_block *nb, unsigned long action,
 	int ret;
 	struct ipsec_rule *rule;
 
+	pr_err("HMR: %s:%d\n", __func__, __LINE__);
+	pr_err("%s:%d got ft %p id %d\n", __func__, __LINE__, attrs->ft, attrs->id);
 	switch (action) {
 	case MLX5_FS_RULE_NOTIFY_ADD_PRE:
+		pr_err("HMR MLX5_FS_RULE_NOTIFY_ADD_PRE\n");
 		if (!is_esp ||
 		    !(attrs->spec.flow_act->action &
 		      (MLX5_FLOW_CONTEXT_ACTION_ENCRYPT |
@@ -763,10 +806,12 @@ int fs_rule_notifier(struct notifier_block *nb, unsigned long action,
 
 		ret = mlx5_create_ipsec_fpga(fdev, attrs, is_egress);
 		if (ret) {
+			pr_err("fpga returned code %d\n", ret);
 			kfree(rule);
 			return notifier_from_errno(ret);
 		}
 
+		pr_err("%s:%d pass fpga\n", __func__, __LINE__);
 		rule->ft = attrs->ft;
 		rule->id = attrs->id;
 		rule->action = attrs->spec.flow_act->action &
@@ -782,6 +827,7 @@ int fs_rule_notifier(struct notifier_block *nb, unsigned long action,
 		if (!MLX5_CAP_FLOWTABLE(mdev,
 					flow_table_properties_nic_receive.ft_field_support.outer_esp_spi) &&
 		    !is_egress) {
+			pr_err("HMR flow_table_properties_nic_receive.outer_esp_spi %d\n", MLX5_CAP_FLOWTABLE(mdev, flow_table_properties_nic_receive.ft_field_support.outer_esp_spi));
 			MLX5_SET(fte_match_set_misc, misc_params_c, outer_esp_spi, 0);
 			MLX5_SET(fte_match_set_misc, misc_params_v, outer_esp_spi, 0);
 			if (!(*misc_params_c) &&
@@ -793,6 +839,7 @@ int fs_rule_notifier(struct notifier_block *nb, unsigned long action,
 		}
 		break;
 	case MLX5_FS_RULE_NOTIFY_ADD_POST:
+		pr_err("HMR MLX5_FS_RULE_NOTIFY_ADD_POST %d\n", attrs->success);
 		rule = rule_search(&ipsec->rules, attrs->ft, attrs->id);
 		if (!rule)
 			break;
@@ -804,6 +851,7 @@ int fs_rule_notifier(struct notifier_block *nb, unsigned long action,
 		}
 		break;
 	case MLX5_FS_RULE_NOTIFY_DEL:
+		pr_err("HMR MLX5_FS_RULE_NOTIFY_DEL\n");
 		rule = rule_search(&ipsec->rules, attrs->ft, attrs->id);
 		if (!rule)
 			break;

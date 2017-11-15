@@ -1973,9 +1973,11 @@ static int parse_flow_action_xfrm(const union ib_flow_spec *ib_spec,
 	switch (maction->ib_action.type) {
 	case IB_ACTION_XFRM_TYPE_ESP_AES_GCM:
 		action->esp_aes_gcm_id = (uintptr_t)maction->esp_aes_gcm.ctx;
+		pr_err("HMR: %s:%d\n", __func__, __LINE__);
 		action->action |= flow_attr->flags & IB_FLOW_ATTR_FLAGS_EGRESS ?
 			MLX5_FLOW_CONTEXT_ACTION_ENCRYPT :
 			MLX5_FLOW_CONTEXT_ACTION_DECRYPT;
+		pr_err("HMR: action->action: 0x%x\n", action->action);
 		return 0;
 	default:
 		return -EOPNOTSUPP;

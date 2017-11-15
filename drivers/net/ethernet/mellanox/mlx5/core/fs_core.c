@@ -1277,6 +1277,7 @@ static void destroy_flow_handle(struct fs_fte *fte,
 			kfree(handle->rule[i]);
 		}
 	}
+
 	kfree(handle);
 }
 
@@ -1999,6 +2000,7 @@ void mlx5_del_flow_rules(struct mlx5_flow_handle *handle)
 
 	fill_notifier_data_by_node(&attrs, &handle->rule[0]->node,
 				   handle->id);
+	pr_err("CALLING DEL NOTIFIER CHAIN!\n");
 	WARN_ON(call_notifiers_chain(&attrs, &ft->node, MLX5_FS_RULE_NOTIFY_DEL,
 				     false, CALL_NOTIFIERS_CHAIN_CONTINUE_ON_ERR));
 
@@ -2693,10 +2695,14 @@ int mlx5_init_fs(struct mlx5_core_dev *dev)
 			goto err;
 	}
 
+	pr_warn("HMR: %s:%d Initializing egress namespace\n", __func__, __LINE__);
 	if (mlx5_accel_ipsec_device_caps(steering->dev) & MLX5_ACCEL_IPSEC_DEVICE) {
+		pr_warn("HMR: %s:%d Initializing egress namespace\n", __func__, __LINE__);
 		err = init_egress_root_ns(steering);
-		if (err)
+		if (err) {
+			pr_warn("HMR: %s:%d Initializing egress namespace\n", __func__, __LINE__);
 			goto err;
+		}
 	}
 
 	return 0;

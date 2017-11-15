@@ -43,6 +43,8 @@ void *mlx5_accel_ipsec_sa_cmd_exec(struct mlx5_core_dev *mdev,
 	if (!MLX5_IPSEC_DEV(mdev))
 		return ERR_PTR(-EOPNOTSUPP);
 
+	print_hex_dump(KERN_ERR, "ipsec_sa: ", DUMP_PREFIX_OFFSET, 32, 4, cmd, sizeof(*cmd), false);
+
 	return mlx5_fpga_ipsec_sa_cmd_exec(mdev, cmd);
 }
 
