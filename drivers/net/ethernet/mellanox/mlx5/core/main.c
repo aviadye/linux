@@ -1108,6 +1108,11 @@ static int mlx5_load_one(struct mlx5_core_dev *dev, struct mlx5_priv *priv,
 		goto err_stop_eqs;
 	}
 
+	err = mlx5_fpga_device_start(dev);
+	if (err) {
+		dev_err(&pdev->dev, "fpga device start failed %d\n", err);
+		goto err_fpga_start;
+	}
 	err = mlx5_init_fs(dev);
 	if (err) {
 		dev_err(&pdev->dev, "Failed to init flow steering\n");
@@ -1126,11 +1131,6 @@ static int mlx5_load_one(struct mlx5_core_dev *dev, struct mlx5_priv *priv,
 		goto err_sriov;
 	}
 
-	err = mlx5_fpga_device_start(dev);
-	if (err) {
-		dev_err(&pdev->dev, "fpga device start failed %d\n", err);
-		goto err_fpga_start;
-	}
 	err = mlx5_accel_ipsec_init(dev);
 	if (err) {
 		dev_err(&pdev->dev, "IPSec device start failed %d\n", err);
@@ -1156,15 +1156,15 @@ out:
 err_reg_dev:
 	mlx5_accel_ipsec_cleanup(dev);
 err_ipsec_start:
-	mlx5_fpga_device_stop(dev);
 
-err_fpga_start:
 	mlx5_sriov_detach(dev);
 
 err_sriov:
 	mlx5_cleanup_fs(dev);
 
 err_fs:
+	mlx5_fpga_device_stop(dev);
+err_fpga_start:
 	free_comp_eqs(dev);
 
 err_stop_eqs:
@@ -1229,10 +1229,9 @@ static int mlx5_unload_one(struct mlx5_core_dev *dev, struct mlx5_priv *priv,
 		mlx5_detach_device(dev);
 
 	mlx5_accel_ipsec_cleanup(dev);
-	mlx5_fpga_device_stop(dev);
-
 	mlx5_sriov_detach(dev);
 	mlx5_cleanup_fs(dev);
+	mlx5_fpga_device_stop(dev);
 	free_comp_eqs(dev);
 	mlx5_stop_eqs(dev);
 	mlx5_put_uars_page(dev, priv->uar);
