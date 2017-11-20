@@ -37,6 +37,7 @@
 #ifdef CONFIG_MLX5_ACCEL
 
 #include <linux/mlx5/driver.h>
+#include <linux/mlx5/accel.h>
 
 enum {
 	MLX5_ACCEL_IPSEC_DEVICE = BIT(1),
@@ -108,6 +109,11 @@ struct mlx5_accel_ipsec_sa {
 	__be32 vid:12;
 	__be32 reserved3:20;
 } __packed;
+
+struct mlx5_accel_esp_xfrm_ctx {
+	struct mlx5_core_dev  *mdev;
+	struct mlx5_accel_esp_xfrm_attrs attrs;
+};
 
 #define MLX5_IPSEC_CAPS_NO_TRAILER  BIT(0)
 

@@ -460,3 +460,76 @@ void mlx5_fpga_ipsec_cleanup(struct mlx5_core_dev *mdev)
 	kfree(fdev->ipsec);
 	fdev->ipsec = NULL;
 }
+
+int mlx5_fpga_esp_validate_xfrm_attrs(struct mlx5_core_dev *mdev,
+				      const struct mlx5_accel_esp_xfrm_attrs *attrs)
+{
+	if ((attrs->flags != MLX5_ACCEL_ESP_FLAGS_TUNNEL) &&
+	    (attrs->flags != MLX5_ACCEL_ESP_FLAGS_TUNNEL)) {
+		mlx5_core_err(mdev, "Only transport and tunnel xfrm states may be offloaded\n");
+		return -EOPNOTSUPP;
+	}
+
+	if (attrs->tfc_pad) {
+		mlx5_core_err(mdev, "Cannot offload xfrm states with tfc padding\n");
+		return -EOPNOTSUPP;
+	}
+
+	if (attrs->replay_type != MLX5_ACCEL_ESP_REPLAY_NONE) {
+		mlx5_core_err(mdev, "Cannot offload xfrm states with anti replay\n");
+		return -EOPNOTSUPP;
+	}
+
+	if (attrs->keymat_type != MLX5_ACCEL_ESP_KEYMAT_AES_GCM) {
+		mlx5_core_err(mdev, "Only aes gcm keymat is supported\n");
+		return -EOPNOTSUPP;
+	}
+
+	if (attrs->keymat.aes_gcm.iv_algo != MLX5_ACCEL_ESP_AES_GCM_IV_ALGO_SEQ) {
+		mlx5_core_err(mdev, "Only iv sequence algo is supported\n");
+		return -EOPNOTSUPP;
+	}
+
+	if (attrs->keymat.aes_gcm.icv_len != 128) {
+		mlx5_core_err(mdev, "Cannot offload xfrm states with AEAD ICV length other than 128bit\n");
+		return -EOPNOTSUPP;
+	}
+
+	if ((attrs->keymat.aes_gcm.key_len != 128) &&
+	    (attrs->keymat.aes_gcm.key_len != 256)) {
+		mlx5_core_err(mdev, "Cannot offload xfrm states with AEAD key length other than 128/256 bit\n");
+		return -EOPNOTSUPP;
+	}
+
+	return 0;
+}
+
+struct mlx5_accel_esp_xfrm_ctx *mlx5_fpga_esp_create_xfrm_ctx(struct mlx5_core_dev *mdev,
+							      const struct mlx5_accel_esp_xfrm_attrs *attrs,
+							      u32 flags)
+{
+	struct mlx5_accel_esp_xfrm_ctx *ctx;
+
+	if (!(flags & MLX5_ACCEL_XFRM_FLAG_REQUIRE_METADATA)) {
+		mlx5_core_warn(mdev, "Tried to create an esp action without metadata\n");
+		return ERR_PTR(-EOPNOTSUPP);
+	}
+
+	if (!mlx5_fpga_esp_validate_xfrm_attrs(mdev, attrs)) {
+		mlx5_core_warn(mdev, "Tried to create an esp with unsupported attrs\n");
+		return ERR_PTR(-EOPNOTSUPP);
+	}
+
+	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
+	if (!ctx)
+		return ERR_PTR(-ENOMEM);
+
+	memcpy(&ctx->attrs, attrs, sizeof(ctx->attrs));
+
+	return ctx;
+}
+
+void mlx5_fpga_esp_destroy_xfrm_ctx(struct mlx5_accel_esp_xfrm_ctx *ctx)
+{
+	kfree(ctx);
+}
