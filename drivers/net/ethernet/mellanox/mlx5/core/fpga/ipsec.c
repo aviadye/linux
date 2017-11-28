@@ -430,6 +430,9 @@ u32 mlx5_fpga_ipsec_device_caps(struct mlx5_core_dev *mdev)
 	if (MLX5_GET(ipsec_extended_cap, fdev->ipsec->caps, rx_no_trailer))
 		ret |= MLX5_ACCEL_IPSEC_CAP_RX_NO_TRAILER;
 
+	if (MLX5_GET(ipsec_extended_cap, fdev->ipsec->caps, esn))
+		ret |= MLX5_ACCEL_IPSEC_CAP_ESN;
+
 	return ret;
 }
 

@@ -227,6 +227,26 @@ static inline int mlx5e_xfrm_validate_state(struct xfrm_state *x)
 	return 0;
 }
 
+static void mlx5e_xfrm_update_state(struct xfrm_state *x)
+{
+	struct mlx5e_ipsec_sa_entry *sa_entry = (void *)xfrm_dev_offload_handle(x);
+	struct mlx5_accel_ipsec_sa hw_sa;
+	void *context;
+
+	if (!sa_entry)
+		return;
+
+	WARN_ON(sa_entry->x != x);
+
+	mlx5e_ipsec_build_hw_sa(MLX5_IPSEC_CMD_MOD_SA_V2, sa_entry, &hw_sa);
+	context = mlx5_accel_ipsec_sa_cmd_exec(sa_entry->ipsec->en_priv->mdev, &hw_sa,
+					       sizeof(hw_sa));
+	if (IS_ERR(context))
+		return;
+
+	sa_entry->context = context;
+}
+
 static int mlx5e_xfrm_add_state(struct xfrm_state *x)
 {
 	struct mlx5e_ipsec_sa_entry *sa_entry = NULL;
@@ -394,11 +414,48 @@ static bool mlx5e_ipsec_offload_ok(struct sk_buff *skb, struct xfrm_state *x)
 	return true;
 }
 
+static void mlx5e_ipsec_update_esn(struct xfrm_state *x)
+{
+	struct xfrm_replay_state_esn *replay_esn = x->replay_esn;
+	struct net_device *netdev = x->xso.dev;
+	struct mlx5e_priv *priv;
+	bool *scope_start_cmd;
+	bool *scope_mid_cmd;
+	u32 seq_bottom;
+	u8 overlap;
+	u32 *esn;
+
+	priv = netdev_priv(netdev);
+	seq_bottom = replay_esn->seq;
+	scope_start_cmd = &priv->ipsec->esn_state.scope_start_cmd;
+	scope_mid_cmd = &priv->ipsec->esn_state.scope_mid_cmd;
+	overlap = priv->ipsec->esn_state.overlap;
+	esn = &priv->ipsec->esn_state.esn;
+
+	if (unlikely(!(*scope_start_cmd) && overlap &&
+		     seq_bottom < MLX5E_ESN_SCOPE_MID)) {
+		*scope_start_cmd = true;
+		*scope_mid_cmd = false;
+		++(*esn);
+		priv->ipsec->esn_state.overlap = 0;
+	} else if (unlikely(!(*scope_mid_cmd) && !overlap &&
+			    seq_bottom >= MLX5E_ESN_SCOPE_MID)) {
+		*scope_start_cmd = false;
+		*scope_mid_cmd = true;
+		priv->ipsec->esn_state.overlap = 1;
+	} else {
+		return;
+	}
+
+	mlx5e_xfrm_update_state(x);
+}
+
 static const struct xfrmdev_ops mlx5e_ipsec_xfrmdev_ops = {
 	.xdo_dev_state_add	= mlx5e_xfrm_add_state,
 	.xdo_dev_state_delete	= mlx5e_xfrm_del_state,
 	.xdo_dev_state_free	= mlx5e_xfrm_free_state,
 	.xdo_dev_offload_ok	= mlx5e_ipsec_offload_ok,
+	.xdo_dev_state_advance_esn = mlx5e_ipsec_update_esn,
 };
 
 void mlx5e_ipsec_build_netdev(struct mlx5e_priv *priv)
