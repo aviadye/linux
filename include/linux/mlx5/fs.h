@@ -40,6 +40,8 @@
 
 enum {
 	MLX5_FLOW_CONTEXT_ACTION_FWD_NEXT_PRIO	= 1 << 16,
+	MLX5_FLOW_CONTEXT_ACTION_ENCRYPT	= 1 << 17,
+	MLX5_FLOW_CONTEXT_ACTION_DECRYPT	= 1 << 18,
 };
 
 enum {
@@ -142,6 +144,7 @@ struct mlx5_flow_act {
 	u32 flow_tag;
 	u32 encap_id;
 	u32 modify_id;
+	uintptr_t esp_id;
 };
 
 #define MLX5_DECLARE_FLOW_ACT(name) \
@@ -162,15 +165,17 @@ enum mlx5_fs_rule_notify_action {
 };
 
 struct mlx5_fs_rule_notifier_attrs {
-	struct mlx5_flow_table *ft;
 	struct {
 		u8   *match_criteria_enable;
 		u32  *match_criteria;
 		u32  *match_value;
 		struct mlx5_flow_act *flow_act;
 	} spec;
-	bool success;
+
+	struct mlx5_flow_table *ft;
 	int id;
+
+	bool success;
 };
 
 /* Single destination per rule.

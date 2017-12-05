@@ -36,10 +36,11 @@
 
 #include "accel/ipsec.h"
 
+
 #ifdef CONFIG_MLX5_FPGA
 
 void *mlx5_fpga_ipsec_sa_cmd_exec(struct mlx5_core_dev *mdev,
-				  struct mlx5_accel_ipsec_sa *cmd, int cmd_size);
+				  const void *cmd, int cmd_size);
 int mlx5_fpga_ipsec_sa_cmd_wait(void *context);
 
 u32 mlx5_fpga_ipsec_device_caps(struct mlx5_core_dev *mdev);
@@ -59,9 +60,9 @@ void mlx5_fpga_esp_destroy_xfrm_ctx(struct mlx5_accel_esp_xfrm_ctx *ctx);
 
 #else
 
-static inline void *mlx5_fpga_ipsec_sa_cmd_exec(struct mlx5_core_dev *mdev,
-						struct mlx5_accel_ipsec_sa *cmd,
-						int cmd_size)
+static inline void *
+mlx5_fpga_ipsec_sa_cmd_exec(struct mlx5_core_dev *mdev,
+			    const void *cmd, int cmd_size)
 {
 	return ERR_PTR(-EOPNOTSUPP);
 }

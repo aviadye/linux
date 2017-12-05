@@ -39,9 +39,16 @@ enum mlx5_accel_esp_aes_gcm_keymat_iv_algo {
 };
 
 enum mlx5_accel_esp_flags {
-	MLX5_ACCEL_ESP_FLAGS_TUNNEL        = 0,    /* Default */
-	MLX5_ACCEL_ESP_FLAGS_TRANSPORT     = 1UL << 0,
-	MLX5_ACCEL_ESP_FLAGS_ESN_TRIGGERED = 1UL << 1,
+	MLX5_ACCEL_ESP_FLAGS_TUNNEL            = 0,    /* Default */
+	MLX5_ACCEL_ESP_FLAGS_TRANSPORT         = 1UL << 0,
+	MLX5_ACCEL_ESP_FLAGS_ESN_TRIGGERED     = 1UL << 1,
+	/* TODO: Ask Boris if we need ESN_ENABLED flag */
+	MLX5_ACCEL_ESP_FLAGS_ESN_STATE_OVERLAP = 1UL << 2,
+};
+
+enum mlx5_accel_esp_action {
+	MLX5_ACCEL_ESP_ACTION_DECRYPT,
+	MLX5_ACCEL_ESP_ACTION_ENCRYPT,
 };
 
 enum mlx5_accel_esp_keymats {
@@ -54,12 +61,25 @@ enum mlx5_accel_esp_replay {
 	MLX5_ACCEL_ESP_REPLAY_BMP,
 };
 
+struct aes_gcm_keymat {
+	u64   seq_iv;
+	enum mlx5_accel_esp_aes_gcm_keymat_iv_algo iv_algo;
+
+	u32   salt;
+	u32   icv_len;
+
+	u32   key_len;
+	u32   aes_key[256 / 32];
+};
+
 struct mlx5_accel_esp_xfrm_attrs {
+	enum mlx5_accel_esp_action action;
 	u32   esn;
 	u32   spi;
 	u32   seq;
 	u32   tfc_pad;
 	u32   flags;
+	u32   sa_handle;
 	enum mlx5_accel_esp_replay replay_type;
 	union {
 		struct {
@@ -69,42 +89,39 @@ struct mlx5_accel_esp_xfrm_attrs {
 	} replay;
 	enum mlx5_accel_esp_keymats keymat_type;
 	union {
-		struct {
-			u64   iv;
-			u64   seq_iv;
-			enum mlx5_accel_esp_aes_gcm_keymat_iv_algo   iv_algo;
-
-			u32   salt;
-			u32   icv_len;
-
-			u32   key_len;
-			u32   aes_key[256 / 32];
-		} aes_gcm;
+		struct aes_gcm_keymat aes_gcm;
 	} keymat;
 };
 
-struct mlx5_accel_esp_xfrm_ctx;
+struct mlx5_accel_esp_xfrm_ctx {
+	struct mlx5_core_dev  *mdev;
+	struct mlx5_accel_esp_xfrm_attrs attrs;
+};
 
 enum {
 	MLX5_ACCEL_XFRM_FLAG_REQUIRE_METADATA = 1UL << 0,
 };
 
+enum {
+	MLX5_ACCEL_IPSEC_DEVICE = BIT(1),
+	MLX5_ACCEL_IPSEC_IPV6 = BIT(2),
+	MLX5_ACCEL_IPSEC_ESP = BIT(3),
+	MLX5_ACCEL_IPSEC_LSO = BIT(4),
+	MLX5_ACCEL_IPSEC_NO_TRAILER = BIT(5),
+	MLX5_ACCEL_IPSEC_ESN = BIT(6),
+	MLX5_ACCEL_IPSEC_V2_CMD = BIT(7),
+};
+
 #ifdef CONFIG_MLX5_ACCEL
 
-int mlx5_accel_esp_validate_xfrm_attrs(struct mlx5_core_dev *mdev,
-				       const struct mlx5_accel_esp_xfrm_attrs *attrs);
 struct mlx5_accel_esp_xfrm_ctx *mlx5_accel_esp_create_xfrm_ctx(struct mlx5_core_dev *mdev,
 							       const struct mlx5_accel_esp_xfrm_attrs *attrs,
 							       u32 flags);
+
 void mlx5_accel_esp_destroy_xfrm_ctx(struct mlx5_accel_esp_xfrm_ctx *ctx);
 
-#else
 
-static inline int mlx5_accel_esp_validate_xfrm_attrs(struct mlx5_core_dev *mdev,
-						     const struct mlx5_accel_esp_xfrm_attrs *attrs)
-{
-	return -EOPNOTSUPP;
-}
+#else
 
 static inline struct mlx5_accel_ipsec_xfrm_ctx *mlx5_accel_ipsec_create_xfrm_ctx(struct mlx5_core_dev *mdev,
 										 const struct mlx5_accel_xfrm_ipsec_attrs *attrs,

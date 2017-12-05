@@ -77,13 +77,6 @@ void mlx5_accel_ipsec_cleanup(struct mlx5_core_dev *mdev)
 	mlx5_fpga_ipsec_cleanup(mdev);
 }
 
-int mlx5_accel_esp_validate_xfrm_attrs(struct mlx5_core_dev *mdev,
-				       const struct mlx5_accel_esp_xfrm_attrs *attrs)
-{
-	return mlx5_fpga_esp_validate_xfrm_attrs(mdev, attrs);
-}
-EXPORT_SYMBOL_GPL(mlx5_accel_esp_validate_xfrm_attrs);
-
 struct mlx5_accel_esp_xfrm_ctx *mlx5_accel_esp_create_xfrm_ctx(struct mlx5_core_dev *mdev,
 							       const struct mlx5_accel_esp_xfrm_attrs *attrs,
 							       u32 flags)
