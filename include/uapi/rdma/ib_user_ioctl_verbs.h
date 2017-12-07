@@ -125,6 +125,7 @@ enum uverbs_actions_cq_ops {
 enum uverbs_actions_flow_action_ops {
 	UVERBS_FLOW_ACTION_ESP_CREATE,
 	UVERBS_FLOW_ACTION_DESTROY,
+	UVERBS_FLOW_ACTION_ESP_MODIFY,
 };
 
 enum ib_uverbs_flow_action_esp_flags {

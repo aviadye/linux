@@ -417,12 +417,15 @@ static DECLARE_COMMON_METHOD(UVERBS_CQ_DESTROY,
 			     UA_FLAGS(UVERBS_ATTR_SPEC_F_MANDATORY)));
 
 static u64 esp_flags_uverbs_to_verbs(struct uverbs_attr_bundle *attrs,
-				     u32 flags)
+				     u32 flags, bool is_modify)
 {
 	u64 verbs_flags = flags;
 
 	if (uverbs_attr_is_valid(attrs, FLOW_ACTION_ESP_ESN))
 		verbs_flags |= IB_FLOW_ACTION_ESP_FLAGS_ESN_TRIGGERED;
+
+	if (is_modify && uverbs_attr_is_valid(attrs, FLOW_ACTION_ESP_ATTRS))
+		verbs_flags |= IB_FLOW_ACTION_ESP_FLAGS_MOD_ESP_ATTRS;
 
 	return verbs_flags;
 };
@@ -453,6 +456,24 @@ static int flow_action_esp_keymat_aes_gcm(union ib_flow_action_attrs_esp_keymats
 
 static int (*flow_action_esp_keymat_validate[])(union ib_flow_action_attrs_esp_keymats *keymat) = {
 	[FLOW_ACTION_ESP_KEYMAT_AES_GCM] = flow_action_esp_keymat_aes_gcm,
+};
+
+static int flow_action_esp_replay_none(union ib_flow_action_attrs_esp_replays *replay,
+				       bool is_modify)
+{
+	return is_modify ? 0 : -EINVAL;
+}
+
+static int flow_action_esp_replay_def_ok(union ib_flow_action_attrs_esp_replays *replay,
+					 bool is_modify)
+{
+	return 0;
+}
+
+static int (*flow_action_esp_replay_validate[])(union ib_flow_action_attrs_esp_replays *replay,
+						bool is_modify) = {
+	[FLOW_ACTION_ESP_REPLAY_NONE] = flow_action_esp_replay_none,
+	[FLOW_ACTION_ESP_REPLAY_BMP] = flow_action_esp_replay_def_ok,
 };
 
 static int parse_esp_ip(enum ib_flow_spec_type proto,
@@ -546,7 +567,8 @@ struct ib_flow_action_esp_attr {
 static int parse_flow_action_esp(struct ib_device *ib_dev,
 				 struct ib_uverbs_file *file,
 				 struct uverbs_attr_bundle *attrs,
-				 struct ib_flow_action_esp_attr *esp_attr)
+				 struct ib_flow_action_esp_attr *esp_attr,
+				 bool is_modify)
 {
 	struct ib_uverbs_flow_action_esp uverbs_esp = {};
 	int ret;
@@ -571,7 +593,8 @@ static int parse_flow_action_esp(struct ib_device *ib_dev,
 		esp_attr->hdr.flags = uverbs_esp.flags;
 		esp_attr->hdr.hard_limit_pkts = uverbs_esp.hard_limit_pkts;
 	}
-	esp_attr->hdr.flags = esp_flags_uverbs_to_verbs(attrs, uverbs_esp.flags);
+	esp_attr->hdr.flags = esp_flags_uverbs_to_verbs(attrs, uverbs_esp.flags,
+							is_modify);
 
 	if (uverbs_attr_is_valid(attrs, FLOW_ACTION_ESP_KEYMAT)) {
 		esp_attr->keymat.keymat.protocol =
@@ -599,6 +622,11 @@ static int parse_flow_action_esp(struct ib_device *ib_dev,
 		esp_attr->replay.replay.protocol =
 			uverbs_attr_get_enum_id(attrs, FLOW_ACTION_ESP_REPLAY);
 
+		ret = flow_action_esp_replay_validate[esp_attr->replay.replay.protocol](&esp_attr->replay,
+											is_modify);
+		if (ret)
+			return ret;
+
 		esp_attr->hdr.replay = &esp_attr->replay.replay;
 	}
 
@@ -623,7 +651,7 @@ static int UVERBS_HANDLER(UVERBS_FLOW_ACTION_ESP_CREATE)(struct ib_device *ib_de
 	if (!ib_dev->create_flow_action_esp)
 		return -EOPNOTSUPP;
 
-	ret = parse_flow_action_esp(ib_dev, file, attrs, &esp_attr);
+	ret = parse_flow_action_esp(ib_dev, file, attrs, &esp_attr, false);
 	if (ret)
 		return ret;
 
@@ -654,6 +682,12 @@ static struct uverbs_attr_spec uverbs_flow_action_esp_keymat[] = {
 };
 
 static struct uverbs_attr_spec uverbs_flow_action_esp_replay[] = {
+	[FLOW_ACTION_ESP_REPLAY_NONE] = {
+		.ptr = {
+			.type = UVERBS_ATTR_TYPE_PTR_IN,
+			.len = 0,
+		}
+	},
 	[FLOW_ACTION_ESP_REPLAY_BMP] = {
 		.ptr = {
 			.type = UVERBS_ATTR_TYPE_PTR_IN,
@@ -663,6 +697,33 @@ static struct uverbs_attr_spec uverbs_flow_action_esp_replay[] = {
 	},
 };
 
+static int UVERBS_HANDLER(UVERBS_FLOW_ACTION_ESP_MODIFY)(struct ib_device *ib_dev,
+							 struct ib_uverbs_file *file,
+							 struct uverbs_attr_bundle *attrs)
+{
+	int				  ret;
+	struct ib_uobject		  *uobj;
+	struct ib_flow_action		  *action;
+	struct ib_flow_action_esp_attr	  esp_attr = {};
+
+	if (!ib_dev->modify_flow_action_esp)
+		return -EOPNOTSUPP;
+
+	ret = parse_flow_action_esp(ib_dev, file, attrs, &esp_attr, true);
+	if (ret)
+		return ret;
+
+	uobj = uverbs_attr_get(attrs, FLOW_ACTION_ESP_HANDLE)->obj_attr.uobject;
+	action = uobj->object;
+
+	if (action->type != IB_FLOW_ACTION_ESP)
+		return -EINVAL;
+
+	return ib_dev->modify_flow_action_esp(action,
+					      &esp_attr.hdr,
+					      attrs);
+}
+
 static DECLARE_COMMON_METHOD(UVERBS_FLOW_ACTION_ESP_CREATE,
 	&UVERBS_ATTR_IDR(FLOW_ACTION_ESP_HANDLE, UVERBS_OBJECT_FLOW_ACTION,
 			 UVERBS_ACCESS_NEW,
@@ -671,6 +732,21 @@ static DECLARE_COMMON_METHOD(UVERBS_FLOW_ACTION_ESP_CREATE,
 			    struct ib_uverbs_flow_action_esp,
 			    UA_FLAGS(UVERBS_ATTR_SPEC_F_MANDATORY |
 				     UVERBS_ATTR_SPEC_F_MIN_SZ_OR_ZERO)),
+	&UVERBS_ATTR_PTR_IN(FLOW_ACTION_ESP_ESN, __u32),
+	&UVERBS_ATTR_ENUM_IN(FLOW_ACTION_ESP_KEYMAT, uverbs_flow_action_esp_keymat,
+			     UA_FLAGS(UVERBS_ATTR_SPEC_F_MANDATORY)),
+	&UVERBS_ATTR_ENUM_IN(FLOW_ACTION_ESP_REPLAY,
+			     uverbs_flow_action_esp_replay),
+	&UVERBS_ATTR_PTR_IN(FLOW_ACTION_ESP_ENCAP,
+			    struct ib_uverbs_flow_action_esp_encap));
+
+static DECLARE_COMMON_METHOD(UVERBS_FLOW_ACTION_ESP_MODIFY,
+	&UVERBS_ATTR_IDR(FLOW_ACTION_ESP_HANDLE, UVERBS_OBJECT_FLOW_ACTION,
+			 UVERBS_ACCESS_WRITE,
+			 UA_FLAGS(UVERBS_ATTR_SPEC_F_MANDATORY)),
+	&UVERBS_ATTR_PTR_IN(FLOW_ACTION_ESP_ATTRS,
+			    struct ib_uverbs_flow_action_esp,
+			    UA_FLAGS(UVERBS_ATTR_SPEC_F_MIN_SZ_OR_ZERO)),
 	&UVERBS_ATTR_PTR_IN(FLOW_ACTION_ESP_ESN, __u32),
 	&UVERBS_ATTR_ENUM_IN(FLOW_ACTION_ESP_KEYMAT, uverbs_flow_action_esp_keymat,
 			     UA_FLAGS(UVERBS_ATTR_SPEC_F_MANDATORY)),
@@ -722,7 +798,8 @@ DECLARE_COMMON_OBJECT(UVERBS_OBJECT_FLOW,
 DECLARE_COMMON_OBJECT(UVERBS_OBJECT_FLOW_ACTION,
 		      &UVERBS_TYPE_ALLOC_IDR(0, uverbs_free_flow_action),
 		      &UVERBS_METHOD(UVERBS_FLOW_ACTION_ESP_CREATE),
-		      &UVERBS_METHOD(UVERBS_FLOW_ACTION_DESTROY));
+		      &UVERBS_METHOD(UVERBS_FLOW_ACTION_DESTROY),
+		      &UVERBS_METHOD(UVERBS_FLOW_ACTION_ESP_MODIFY));
 
 DECLARE_COMMON_OBJECT(UVERBS_OBJECT_WQ,
 		      &UVERBS_TYPE_ALLOC_IDR_SZ(sizeof(struct ib_uwq_object), 0,
