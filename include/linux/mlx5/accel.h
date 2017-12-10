@@ -93,7 +93,7 @@ struct mlx5_accel_esp_xfrm_attrs {
 	} keymat;
 };
 
-struct mlx5_accel_esp_xfrm_ctx {
+struct mlx5_accel_esp_xfrm {
 	struct mlx5_core_dev  *mdev;
 	struct mlx5_accel_esp_xfrm_attrs attrs;
 };
@@ -114,23 +114,23 @@ enum {
 
 #ifdef CONFIG_MLX5_ACCEL
 
-struct mlx5_accel_esp_xfrm_ctx *mlx5_accel_esp_create_xfrm_ctx(struct mlx5_core_dev *mdev,
-							       const struct mlx5_accel_esp_xfrm_attrs *attrs,
-							       u32 flags);
+struct mlx5_accel_esp_xfrm *mlx5_accel_esp_create_xfrm(struct mlx5_core_dev *mdev,
+						       const struct mlx5_accel_esp_xfrm_attrs *attrs,
+						       u32 flags);
 
-void mlx5_accel_esp_destroy_xfrm_ctx(struct mlx5_accel_esp_xfrm_ctx *ctx);
+void mlx5_accel_esp_destroy_xfrm(struct mlx5_accel_esp_xfrm *xfrm);
 
 
 #else
 
-static inline struct mlx5_accel_ipsec_xfrm_ctx *mlx5_accel_ipsec_create_xfrm_ctx(struct mlx5_core_dev *mdev,
-										 const struct mlx5_accel_xfrm_ipsec_attrs *attrs,
-										 u32 flags)
+static inline struct mlx5_accel_esp_xfrm *mlx5_accel_esp_create_xfrm(struct mlx5_core_dev *mdev,
+								     const struct mlx5_accel_xfrm_ipsec_attrs *attrs,
+								     u32 flags)
 {
 	return ERR_PTR(-EOPNOTSUPP);
 }
 
-static inline void mlx5_accel_ipsec_destroy_xfrm_ctx(struct mlx5_accel_ipsec_xfrm_ctx *ctx)
+static inline void mlx5_accel_esp_destroy_xfrm(struct mlx5_accel_ipsec_xfrm *xfrm)
 {
 }
 

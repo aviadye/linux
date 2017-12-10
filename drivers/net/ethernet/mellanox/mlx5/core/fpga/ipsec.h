@@ -53,10 +53,10 @@ void mlx5_fpga_ipsec_cleanup(struct mlx5_core_dev *mdev);
 
 int mlx5_fpga_esp_validate_xfrm_attrs(struct mlx5_core_dev *mdev,
 				      const struct mlx5_accel_esp_xfrm_attrs *attrs);
-struct mlx5_accel_esp_xfrm_ctx *mlx5_fpga_esp_create_xfrm_ctx(struct mlx5_core_dev *mdev,
-							      const struct mlx5_accel_esp_xfrm_attrs *attrs,
-							      u32 flags);
-void mlx5_fpga_esp_destroy_xfrm_ctx(struct mlx5_accel_esp_xfrm_ctx *ctx);
+struct mlx5_accel_esp_xfrm *mlx5_fpga_esp_create_xfrm(struct mlx5_core_dev *mdev,
+						      const struct mlx5_accel_esp_xfrm_attrs *attrs,
+						      u32 flags);
+void mlx5_fpga_esp_destroy_xfrm(struct mlx5_accel_esp_xfrm *xfrm);
 
 #else
 
@@ -104,14 +104,14 @@ static inline int mlx5_fpga_esp_validate_xfrm_attrs(struct mlx5_core_dev *mdev,
 	return -EOPNOTSUPP;
 }
 
-static inline struct mlx5_accel_ipsec_xfrm_ctx *mlx5_fpga_ipsec_create_xfrm_ctx(struct mlx5_core_dev *mdev,
-										const struct mlx5_accel_xfrm_ipsec_attrs *attrs,
-										u32 flags)
+static inline struct mlx5_accel_esp_xfrm *mlx5_fpga_esp_create_xfrm(struct mlx5_core_dev *mdev,
+								    const struct mlx5_accel_esp_xfrm_attrs *attrs,
+								    u32 flags)
 {
 	return PTR_ERR(-EOPNOTSUPP);
 }
 
-void mlx5_fpga_ipsec_destroy_xfrm_ctx(struct mlx5_accel_ipsec_xfrm_ctx *ctx)
+void mlx5_fpga_esp_destroy_xfrm(struct mlx5_accel_esp_xfrm *xfrm)
 {
 }
 

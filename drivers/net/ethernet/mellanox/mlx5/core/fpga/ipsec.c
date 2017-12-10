@@ -62,11 +62,11 @@ enum mlx5_fpga_ipsec_cmd {
 	MLX5_FPGA_IPSEC_CMD_SET_CAP = 5,
 };
 
-enum mlx5_ipsec_response_syndrome {
-	MLX5_IPSEC_RESPONSE_SUCCESS = 0,
-	MLX5_IPSEC_RESPONSE_ILLEGAL_REQUEST = 1,
-	MLX5_IPSEC_RESPONSE_SADB_ISSUE = 2,
-	MLX5_IPSEC_RESPONSE_WRITE_RESPONSE_ISSUE = 3,
+enum mlx5_fpga_ipsec_response_syndrome {
+	MLX5_FPGA_IPSEC_RESPONSE_SUCCESS = 0,
+	MLX5_FPGA_IPSEC_RESPONSE_ILLEGAL_REQUEST = 1,
+	MLX5_FPGA_IPSEC_RESPONSE_SADB_ISSUE = 2,
+	MLX5_FPGA_IPSEC_RESPONSE_WRITE_RESPONSE_ISSUE = 3,
 };
 
 enum mlx5_fpga_ipsec_cmd_status {
@@ -109,7 +109,7 @@ struct mlx5_fpga_ipsec_sa {
 	__be32 reserved3:20;
 } __packed;
 
-struct mlx5_ipsec_cmd_resp {
+struct mlx5_fpga_ipsec_cmd_resp {
 	__be32 syndrome;
 	union {
 		__be32 sw_sa_handle;
@@ -118,45 +118,15 @@ struct mlx5_ipsec_cmd_resp {
 	u8 reserved[24];
 } __packed;
 
-struct mlx5_ipsec_command_context {
+struct mlx5_fpga_ipsec_cmd_context {
 	struct mlx5_fpga_dma_buf buf;
 	enum mlx5_fpga_ipsec_cmd_status status;
-	struct mlx5_ipsec_cmd_resp resp;
+	struct mlx5_fpga_ipsec_cmd_resp resp;
 	int status_code;
 	struct completion complete;
 	struct mlx5_fpga_device *dev;
 	struct list_head list; /* Item in pending_cmds */
 	u8 command[0];
-};
-
-struct mlx5_fpga_ipsec_notifier_block {
-	struct notifier_block           fs_notifier;
-	struct mlx5_fpga_device         *fpga_device;
-};
-
-struct ipsec_rule {
-	struct rb_node                          node;
-	struct mlx5_flow_table                  *ft;
-	int                                     id;
-
-	struct mlx5_fpga_ipsec_xfrm_ctx         *xfrm_ctx;
-	struct mlx5_fpga_ipsec_sa_ctx 		*sa_ctx;
-	u32                                     saved_action;
-	u32                                     saved_outer_esp_spi_mask;
-	u32                                     saved_outer_esp_spi_value;
-};
-
-struct mlx5_fpga_ipsec {
-	struct list_head pending_cmds;
-	spinlock_t pending_cmds_lock; /* Protects pending_cmds */
-	u32 caps[MLX5_ST_SZ_DW(ipsec_extended_cap)];
-	struct mlx5_fpga_conn *conn;
-	struct mlx5_fpga_ipsec_notifier_block fs_notifier_ingress;
-	struct mlx5_fpga_ipsec_notifier_block fs_notifier_egress;
-	struct rhashtable sa_hash;	/* hw_sa -> mlx5_fpga_ipsec_sa_ctx */
-	struct mutex sa_hash_lock;
-	struct rb_root rules;		/* (ft, id) -> mlx5_fpga_ipsec_sa_ctx */
-	struct mutex rules_lock; 	/* lock for rules */
 };
 
 struct mlx5_fpga_ipsec_sa_ctx {
@@ -165,11 +135,23 @@ struct mlx5_fpga_ipsec_sa_ctx {
 	struct mlx5_core_dev            *dev;
 };
 
-struct mlx5_fpga_ipsec_xfrm_ctx {
+struct mlx5_fpga_esp_xfrm {
 	unsigned int 			num_rules;
-	struct mlx5_fpga_ipsec_sa_ctx   *sa_ctx;
+	struct mlx5_fpga_ipsec_sa_ctx	*sa_ctx;
 	struct mutex 			lock;
-	struct mlx5_accel_esp_xfrm_ctx  accel_xfrm_ctx;
+	struct mlx5_accel_esp_xfrm	accel_xfrm;
+};
+
+struct mlx5_fpga_ipsec_rule {
+	struct rb_node			node;
+	struct mlx5_flow_table		*ft;
+	int				id;
+
+	struct mlx5_fpga_esp_xfrm	*fpga_xfrm;
+
+	u32				saved_action;
+	u32				saved_outer_esp_spi_mask;
+	u32				saved_outer_esp_spi_value;
 };
 
 static const struct rhashtable_params rhash_sa = {
@@ -178,6 +160,31 @@ static const struct rhashtable_params rhash_sa = {
 	.head_offset = offsetof(struct mlx5_fpga_ipsec_sa_ctx, hash),
 	.automatic_shrinking = true,
 	.min_size = 1,
+};
+
+struct mlx5_fpga_ipsec {
+	struct mlx5_fpga_device *fdev;
+	struct list_head pending_cmds;
+	spinlock_t pending_cmds_lock; /* Protects pending_cmds */
+	u32 caps[MLX5_ST_SZ_DW(ipsec_extended_cap)];
+	struct mlx5_fpga_conn *conn;
+
+	struct notifier_block	fs_notifier_ingress;
+	struct notifier_block	fs_notifier_egress;
+
+	/* Map hardware SA           -->  SA context
+	 *     (mlx5_fpga_ipsec_sa)       (mlx5_fpga_ipsec_sa_ctx)
+	 * We will use this hash to avoid SAs duplication in fpga which
+	 * aren't allowed
+	 */
+	struct rhashtable sa_hash;	/* hw_sa -> mlx5_fpga_ipsec_sa_ctx */
+	struct mutex sa_hash_lock;
+
+	/* Tree holding all rules for this fpga device
+	 * Key for searching a rule (mlx5_fpga_ipsec_rule) is (ft, id)
+	 */
+	struct rb_root rules_rb;
+	struct mutex rules_rb_lock;
 };
 
 static bool mlx5_fpga_is_ipsec_device(struct mlx5_core_dev *mdev)
@@ -201,10 +208,10 @@ static void mlx5_fpga_ipsec_send_complete(struct mlx5_fpga_conn *conn,
 					  struct mlx5_fpga_dma_buf *buf,
 					  u8 status)
 {
-	struct mlx5_ipsec_command_context *context;
+	struct mlx5_fpga_ipsec_cmd_context *context;
 
 	if (status) {
-		context = container_of(buf, struct mlx5_ipsec_command_context,
+		context = container_of(buf, struct mlx5_fpga_ipsec_cmd_context,
 				       buf);
 		mlx5_fpga_warn(fdev, "IPSec command send failed with status %u\n",
 			       status);
@@ -213,16 +220,16 @@ static void mlx5_fpga_ipsec_send_complete(struct mlx5_fpga_conn *conn,
 	}
 }
 
-static inline int syndrome_to_errno(enum mlx5_ipsec_response_syndrome syndrome)
+static inline int syndrome_to_errno(enum mlx5_fpga_ipsec_response_syndrome syndrome)
 {
 	switch (syndrome) {
-	case MLX5_IPSEC_RESPONSE_SUCCESS:
+	case MLX5_FPGA_IPSEC_RESPONSE_SUCCESS:
 		return 0;
-	case MLX5_IPSEC_RESPONSE_SADB_ISSUE:
+	case MLX5_FPGA_IPSEC_RESPONSE_SADB_ISSUE:
 		return -EEXIST;
-	case MLX5_IPSEC_RESPONSE_ILLEGAL_REQUEST:
+	case MLX5_FPGA_IPSEC_RESPONSE_ILLEGAL_REQUEST:
 		return -EINVAL;
-	case MLX5_IPSEC_RESPONSE_WRITE_RESPONSE_ISSUE:
+	case MLX5_FPGA_IPSEC_RESPONSE_WRITE_RESPONSE_ISSUE:
 		return -EIO;
 	}
 	return -EIO;
@@ -230,9 +237,9 @@ static inline int syndrome_to_errno(enum mlx5_ipsec_response_syndrome syndrome)
 
 static void mlx5_fpga_ipsec_recv(void *cb_arg, struct mlx5_fpga_dma_buf *buf)
 {
-	struct mlx5_ipsec_cmd_resp *resp = buf->sg[0].data;
-	struct mlx5_ipsec_command_context *context;
-	enum mlx5_ipsec_response_syndrome syndrome;
+	struct mlx5_fpga_ipsec_cmd_resp *resp = buf->sg[0].data;
+	struct mlx5_fpga_ipsec_cmd_context *context;
+	enum mlx5_fpga_ipsec_response_syndrome syndrome;
 	struct mlx5_fpga_device *fdev = cb_arg;
 	unsigned long flags;
 
@@ -247,7 +254,7 @@ static void mlx5_fpga_ipsec_recv(void *cb_arg, struct mlx5_fpga_dma_buf *buf)
 
 	spin_lock_irqsave(&fdev->ipsec->pending_cmds_lock, flags);
 	context = list_first_entry_or_null(&fdev->ipsec->pending_cmds,
-					   struct mlx5_ipsec_command_context,
+					   struct mlx5_fpga_ipsec_cmd_context,
 					   list);
 	if (context)
 		list_del(&context->list);
@@ -274,7 +281,7 @@ static void mlx5_fpga_ipsec_recv(void *cb_arg, struct mlx5_fpga_dma_buf *buf)
 static void *mlx5_fpga_ipsec_cmd_exec(struct mlx5_core_dev *mdev,
 				      const void *cmd, int cmd_size)
 {
-	struct mlx5_ipsec_command_context *context;
+	struct mlx5_fpga_ipsec_cmd_context *context;
 	struct mlx5_fpga_device *fdev = mdev->fpga;
 	unsigned long flags;
 	int res;
@@ -317,7 +324,7 @@ static void *mlx5_fpga_ipsec_cmd_exec(struct mlx5_core_dev *mdev,
 
 static int mlx5_fpga_ipsec_cmd_wait(void *ctx)
 {
-	struct mlx5_ipsec_command_context *context = ctx;
+	struct mlx5_fpga_ipsec_cmd_context *context = ctx;
 	int res;
 
 	res = wait_for_completion_killable(&context->complete);
@@ -342,7 +349,7 @@ void *mlx5_fpga_ipsec_sa_cmd_exec(struct mlx5_core_dev *mdev,
 
 int mlx5_fpga_ipsec_sa_cmd_wait(void *ctx)
 {
-	struct mlx5_ipsec_command_context *context = ctx;
+	struct mlx5_fpga_ipsec_cmd_context *context = ctx;
 	struct mlx5_accel_ipsec_sa *sa;
 	int res;
 
@@ -363,43 +370,41 @@ out:
 	return res;
 }
 
-//TODO: change this function
-static int _mlx5_create_update_fpga_ipsec_ctx(struct mlx5_fpga_device *fpga,
-		struct mlx5_fpga_ipsec_sa *hw_sa,
-		enum mlx5_fpga_ipsec_cmd cmd)
+static int mlx5_update_fpga_ipsec_hw_sa(struct mlx5_fpga_device *fdev,
+					struct mlx5_fpga_ipsec_sa *hw_sa,
+					enum mlx5_fpga_ipsec_cmd cmd)
 {
-	int err;
-	size_t sa_cmd_size;
+	struct mlx5_core_dev *dev = fdev->mdev;
 	struct mlx5_fpga_ipsec_sa *sa;
-	struct mlx5_ipsec_command_context *mailbox_ctx;
-	struct mlx5_core_dev *dev = fpga->mdev;
-	struct mlx5_fpga_ipsec *fipsec = fpga->ipsec;
+	struct mlx5_fpga_ipsec_cmd_context *cmd_context;
+	size_t sa_cmd_size;
+	int err;
 
 	hw_sa->ipsec_sa_v1.cmd = htonl(cmd);
-	if (MLX5_GET(ipsec_extended_cap, fipsec->caps, v2_command))
+	if (MLX5_GET(ipsec_extended_cap, fdev->ipsec->caps, v2_command))
 		sa_cmd_size = sizeof(*hw_sa);
 	else
 		sa_cmd_size = sizeof(hw_sa->ipsec_sa_v1);
 
-	mailbox_ctx = (struct mlx5_ipsec_command_context *)
-		mlx5_fpga_ipsec_cmd_exec(dev, hw_sa, sa_cmd_size);
-	if (IS_ERR(mailbox_ctx))
-		return PTR_ERR(mailbox_ctx);
+	cmd_context = (struct mlx5_fpga_ipsec_cmd_context *)
+			mlx5_fpga_ipsec_cmd_exec(dev, hw_sa, sa_cmd_size);
+	if (IS_ERR(cmd_context))
+		return PTR_ERR(cmd_context);
 
-	err = mlx5_fpga_ipsec_cmd_wait(mailbox_ctx);
+	err = mlx5_fpga_ipsec_cmd_wait(cmd_context);
 	if (err)
 		goto out;
 
-	sa = (struct mlx5_fpga_ipsec_sa *)&mailbox_ctx->command;
-	if (sa->ipsec_sa_v1.sw_sa_handle != mailbox_ctx->resp.sw_sa_handle) {
-		mlx5_fpga_err(fpga, "mismatch SA handle. cmd 0x%08x vs resp 0x%08x\n",
-				ntohl(sa->ipsec_sa_v1.sw_sa_handle),
-				ntohl(mailbox_ctx->resp.sw_sa_handle));
+	sa = (struct mlx5_fpga_ipsec_sa *)&cmd_context->command;
+	if (sa->ipsec_sa_v1.sw_sa_handle != cmd_context->resp.sw_sa_handle) {
+		mlx5_fpga_err(fdev, "mismatch SA handle. cmd 0x%08x vs resp 0x%08x\n",
+			      ntohl(sa->ipsec_sa_v1.sw_sa_handle),
+			      ntohl(cmd_context->resp.sw_sa_handle));
 		err = -EIO;
 	}
 
 out:
-	kfree(mailbox_ctx);
+	kfree(cmd_context);
 	return err;
 }
 
@@ -495,7 +500,7 @@ out:
 
 static int mlx5_fpga_ipsec_set_caps(struct mlx5_core_dev *mdev, u32 flags)
 {
-	struct mlx5_ipsec_command_context *context;
+	struct mlx5_fpga_ipsec_cmd_context *context;
 	struct mlx5_accel_ipsec_cap cmd = {0};
 	int err;
 
@@ -534,9 +539,9 @@ static int mlx5_fpga_ipsec_enable_supported_caps(struct mlx5_core_dev *mdev)
 }
 
 
-static void mlx5_fpga_ipsec_build_hw_sa_xfrm(struct mlx5_core_dev *mdev,
-					     const struct mlx5_accel_esp_xfrm_attrs *xfrm_attrs,
-					     struct mlx5_fpga_ipsec_sa *hw_sa)
+static void mlx5_fpga_ipsec_build_hw_xfrm(struct mlx5_core_dev *mdev,
+					  const struct mlx5_accel_esp_xfrm_attrs *xfrm_attrs,
+					  struct mlx5_fpga_ipsec_sa *hw_sa)
 {
 	const struct aes_gcm_keymat *aes_gcm = &xfrm_attrs->keymat.aes_gcm;
 
@@ -603,9 +608,9 @@ static void mlx5_fpga_ipsec_build_hw_sa(struct mlx5_core_dev *mdev,
 
 	memset(hw_sa, 0, sizeof(*hw_sa));
 
-	mlx5_fpga_ipsec_build_hw_sa_xfrm(mdev, xfrm_attrs, hw_sa);
+	mlx5_fpga_ipsec_build_hw_xfrm(mdev, xfrm_attrs, hw_sa);
 
-	/* ips */
+	/* IPs */
 	if (mlx5_fs_is_outer_ipv4_flow(mdev, rule_attrs->spec.match_criteria,
 				       rule_attrs->spec.match_value)) {
 		memcpy(&hw_sa->ipsec_sa_v1.sip[3],
@@ -631,7 +636,7 @@ static void mlx5_fpga_ipsec_build_hw_sa(struct mlx5_core_dev *mdev,
 		is_ipv6 = true;
 	}
 
-	/* spi */
+	/* SPI */
 	hw_sa->ipsec_sa_v1.spi =
 			MLX5_GET_BE(typeof(hw_sa->ipsec_sa_v1.spi),
 				    fte_match_param, rule_attrs->spec.match_value,
@@ -763,18 +768,19 @@ static bool mlx5_is_fpga_egress_ipsec_rule(struct mlx5_core_dev *dev,
 	return true;
 }
 
-static int mlx5_create_fpga_ipsec_ctx(struct mlx5_fpga_device *fpga,
-				      struct mlx5_fs_rule_notifier_attrs *attrs,
-				      bool is_egress)
+static int mlx5_fpga_ipsec_create_sa_ctx(struct mlx5_fpga_ipsec *fipsec,
+					 struct mlx5_fs_rule_notifier_attrs *attrs,
+					 bool is_egress)
 {
 	struct mlx5_fpga_ipsec_sa_ctx *sa_ctx;
-	struct mlx5_core_dev *dev = fpga->mdev;
-	struct mlx5_fpga_ipsec *fipsec = fpga->ipsec;
-	struct mlx5_accel_esp_xfrm_ctx *accel_xfrm_ctx;
-	struct mlx5_fpga_ipsec_xfrm_ctx *ctx;
+	struct mlx5_fpga_device *fdev = fipsec->fdev;
+	struct mlx5_core_dev *dev = fdev->mdev;
+	struct mlx5_accel_esp_xfrm *accel_xfrm;
+	struct mlx5_fpga_esp_xfrm *fpga_xfrm;
 	enum mlx5_fpga_ipsec_cmd cmd;
 	int err = 0;
 
+	/* validate */
 	if (is_egress) {
 		if (!mlx5_is_fpga_egress_ipsec_rule(dev, *attrs->spec.match_criteria_enable,
 						    attrs->spec.match_criteria,
@@ -787,49 +793,63 @@ static int mlx5_create_fpga_ipsec_ctx(struct mlx5_fpga_device *fpga,
 					    attrs->spec.match_value)) {
 		return -EINVAL;
 	}
-	accel_xfrm_ctx = (struct mlx5_accel_esp_xfrm_ctx *)attrs->spec.flow_act->esp_id;
-	ctx = container_of(accel_xfrm_ctx, typeof(*ctx), accel_xfrm_ctx);
 
+	/* get xfrm context */
+	accel_xfrm = (struct mlx5_accel_esp_xfrm *)attrs->spec.flow_act->esp_id;
+	fpga_xfrm = container_of(accel_xfrm, typeof(*fpga_xfrm), accel_xfrm);
+
+	/* alloc SA */
 	sa_ctx = kzalloc(sizeof(*sa_ctx), GFP_KERNEL);
 	if (!sa_ctx)
 		return -ENOMEM;
 
 	sa_ctx->dev = dev;
-	mlx5_fpga_ipsec_build_hw_sa(dev, attrs, &accel_xfrm_ctx->attrs, &sa_ctx->hw_sa);
 
-	mutex_lock(&ctx->lock);
-	if (ctx->sa_ctx) {	/* multiple rules for same accel_xfrm_ctx */
-		/* all rules must be with same ips and spi */
-		if (memcmp(&sa_ctx->hw_sa, &ctx->sa_ctx->hw_sa, sizeof(sa_ctx->hw_sa))) {
+	/* build candidate SA */
+	mlx5_fpga_ipsec_build_hw_sa(dev, attrs, &accel_xfrm->attrs,
+				    &sa_ctx->hw_sa);
+
+
+	mutex_lock(&fpga_xfrm->lock);
+
+	if (fpga_xfrm->sa_ctx) {	/* multiple rules for same accel_xfrm */
+		/* all rules must be with same IPs and SPI */
+		if (memcmp(&sa_ctx->hw_sa, &fpga_xfrm->sa_ctx->hw_sa,
+			   sizeof(sa_ctx->hw_sa))) {
 			err = -EINVAL;
 			goto exists;
 		}
 
-		ctx->num_rules++;
+		++fpga_xfrm->num_rules;
 		err = 0;
 		goto exists;
 	}
 
-	/* this is unbounded accel_xfrm_ctx */
+	/* This is unbounded fpga_xfrm, try to add to hash */
 	mutex_lock(&fipsec->sa_hash_lock);
+
 	err = rhashtable_lookup_insert_fast(&fipsec->sa_hash, &sa_ctx->hash,
 					    rhash_sa);
 	if (err)
-		/* can't bound different accel_xfrm_ctx to same sa_ctx */
+		/* Can't bound different accel_xfrm to already existing sa_ctx.
+		 * This is because we can't support multiple ketmats for
+		 * same IPs and SPI
+		 */
 		goto unlock_hash;
 
-	/* bound accel_xxfrm_ctx */
+	/* Bound accel_xfrm to sa_ctx */
 	cmd = MLX5_GET(ipsec_extended_cap, fipsec->caps, v2_command) ? 
 		MLX5_FPGA_IPSEC_CMD_ADD_SA_V2 : MLX5_FPGA_IPSEC_CMD_ADD_SA;
-	err = _mlx5_create_update_fpga_ipsec_ctx(fpga, &sa_ctx->hw_sa, cmd);
+	err = mlx5_update_fpga_ipsec_hw_sa(fdev, &sa_ctx->hw_sa, cmd);
 	if (err)
 		goto delete_hash;
 
 	mutex_unlock(&fipsec->sa_hash_lock);
 
-	ctx->num_rules++;
-	ctx->sa_ctx = sa_ctx;
-	mutex_unlock(&ctx->lock);
+	++fpga_xfrm->num_rules;
+	fpga_xfrm->sa_ctx = sa_ctx;
+
+	mutex_unlock(&fpga_xfrm->lock);
 
 	return 0;
 
@@ -838,34 +858,28 @@ delete_hash:
 			       	       rhash_sa));
 unlock_hash:
 	mutex_unlock(&fipsec->sa_hash_lock);
+
 exists:
-	mutex_unlock(&ctx->lock);
+	mutex_unlock(&fpga_xfrm->lock);
 	kfree(sa_ctx);
 	return err;
 }
 
-static void mlx5_release_fpga_ipsec_sa_ctx(struct mlx5_fpga_ipsec_sa_ctx *sa_ctx)
+static void mlx5_fpga_ipsec_release_sa_ctx(struct mlx5_fpga_ipsec_sa_ctx *sa_ctx)
 {
-	struct mlx5_fpga_ipsec *fipsec = sa_ctx->dev->fpga->ipsec;
-	int sa_cmd_size;
-	void *context;
+	struct mlx5_fpga_device *fdev = sa_ctx->dev->fpga;
+	struct mlx5_fpga_ipsec *fipsec = fdev->ipsec;
+	int err;
+	enum mlx5_fpga_ipsec_cmd cmd =
+			MLX5_GET(ipsec_extended_cap, fipsec->caps, v2_command) ?
+					MLX5_FPGA_IPSEC_CMD_DEL_SA_V2 : MLX5_FPGA_IPSEC_CMD_DEL_SA;
 
-	if (MLX5_GET(ipsec_extended_cap, fipsec->caps, v2_command)) {
-		sa_ctx->hw_sa.ipsec_sa_v1.cmd =
-				htonl(MLX5_FPGA_IPSEC_CMD_DEL_SA_V2);
-		sa_cmd_size = sizeof(sa_ctx->hw_sa);
-	} else {
-		sa_ctx->hw_sa.ipsec_sa_v1.cmd =
-				htonl(MLX5_FPGA_IPSEC_CMD_DEL_SA);
-		sa_cmd_size = sizeof(sa_ctx->hw_sa.ipsec_sa_v1);
-	}
 
-	context = mlx5_fpga_ipsec_sa_cmd_exec(sa_ctx->dev,
-					      &sa_ctx->hw_sa, sa_cmd_size);
-	if (WARN_ON(context))
+	err = mlx5_update_fpga_ipsec_hw_sa(fdev, &sa_ctx->hw_sa, cmd);
+	if (err) {
+		WARN_ON(err);
 		return;
-
-	WARN_ON(mlx5_accel_ipsec_sa_cmd_wait(context));
+	}
 
 	mutex_lock(&fipsec->sa_hash_lock);
 	WARN_ON(rhashtable_remove_fast(&fipsec->sa_hash, &sa_ctx->hash,
@@ -873,14 +887,14 @@ static void mlx5_release_fpga_ipsec_sa_ctx(struct mlx5_fpga_ipsec_sa_ctx *sa_ctx
 	mutex_unlock(&fipsec->sa_hash_lock);
 }
 
-static void mlx5_delete_fpga_xfrm_ctx(struct mlx5_fpga_ipsec_xfrm_ctx *ctx)
+static void mlx5_fpga_ipsec_delete_sa_ctx(struct mlx5_fpga_esp_xfrm *fpga_xfrm)
 {
-	mutex_lock(&ctx->lock);
-	if (--ctx->num_rules) {
-		mlx5_release_fpga_ipsec_sa_ctx(ctx->sa_ctx);
-		ctx->sa_ctx = NULL;
+	mutex_lock(&fpga_xfrm->lock);
+	if (--fpga_xfrm->num_rules) {
+		mlx5_fpga_ipsec_release_sa_ctx(fpga_xfrm->sa_ctx);
+		fpga_xfrm->sa_ctx = NULL;
 	}
-	mutex_unlock(&ctx->lock);
+	mutex_unlock(&fpga_xfrm->lock);
 }
 
 static int compare_keys(struct mlx5_flow_table *ft1, int id1,
@@ -895,14 +909,14 @@ static int compare_keys(struct mlx5_flow_table *ft1, int id1,
 	return 0;
 }
 
-static struct ipsec_rule *_rule_search(struct rb_root *root,
-			       struct mlx5_flow_table *ft,
-			       int id)
+static inline struct mlx5_fpga_ipsec_rule *_rule_search(struct rb_root *root,
+			       	       	       	        struct mlx5_flow_table *ft,
+			       	       	       	        int id)
 {
 	struct rb_node *node = root->rb_node;
 
 	while (node) {
-		struct ipsec_rule *rule = container_of(node, struct ipsec_rule,
+		struct mlx5_fpga_ipsec_rule *rule = container_of(node, struct mlx5_fpga_ipsec_rule,
 						       node);
 		int result;
 
@@ -917,27 +931,28 @@ static struct ipsec_rule *_rule_search(struct rb_root *root,
 	return NULL;
 }
 
-static struct ipsec_rule *rule_search(struct mlx5_fpga_ipsec *ipsec_dev,
-				      struct mlx5_flow_table *ft,
-				      int id)
+static struct mlx5_fpga_ipsec_rule *rule_search(struct mlx5_fpga_ipsec *ipsec_dev,
+						struct mlx5_flow_table *ft,
+						int id)
 {
-	struct ipsec_rule *rule;
+	struct mlx5_fpga_ipsec_rule *rule;
 
-	mutex_lock(&ipsec_dev->rules_lock);
-	rule = _rule_search(&ipsec_dev->rules, ft, id);
-	mutex_unlock(&ipsec_dev->rules_lock);
+	mutex_lock(&ipsec_dev->rules_rb_lock);
+	rule = _rule_search(&ipsec_dev->rules_rb, ft, id);
+	mutex_unlock(&ipsec_dev->rules_rb_lock);
 
 	return rule;
 }
 
-static int _rule_insert(struct rb_root *root, struct ipsec_rule *rule)
+static inline int _rule_insert(struct rb_root *root,
+			       struct mlx5_fpga_ipsec_rule *rule)
 {
 	struct rb_node **new = &root->rb_node, *parent = NULL;
 
 	/* Figure out where to put new node */
 	while (*new) {
-		struct ipsec_rule *this =
-			container_of(*new, struct ipsec_rule, node);
+		struct mlx5_fpga_ipsec_rule *this =
+			container_of(*new, struct mlx5_fpga_ipsec_rule, node);
 		int result = compare_keys(rule->ft, rule->id,
 					  this->ft, this->id);
 
@@ -958,18 +973,19 @@ static int _rule_insert(struct rb_root *root, struct ipsec_rule *rule)
 }
 
 static int rule_insert(struct mlx5_fpga_ipsec *ipsec_dev,
-		       struct ipsec_rule *rule)
+		       struct mlx5_fpga_ipsec_rule *rule)
 {
 	int ret;
 
-	mutex_lock(&ipsec_dev->rules_lock);
-	ret = _rule_insert(&ipsec_dev->rules, rule);
-	mutex_unlock(&ipsec_dev->rules_lock);
+	mutex_lock(&ipsec_dev->rules_rb_lock);
+	ret = _rule_insert(&ipsec_dev->rules_rb, rule);
+	mutex_unlock(&ipsec_dev->rules_rb_lock);
 
 	return ret;
 }
 
-static int _rule_delete(struct rb_root *root, struct ipsec_rule *rule)
+static inline int _rule_delete(struct rb_root *root,
+			       struct mlx5_fpga_ipsec_rule *rule)
 {
 	if (rule) {
 		rb_erase(&rule->node, root);
@@ -980,18 +996,18 @@ static int _rule_delete(struct rb_root *root, struct ipsec_rule *rule)
 }
 
 static int rule_delete(struct mlx5_fpga_ipsec *ipsec_dev,
-		       struct ipsec_rule *rule)
+		       struct mlx5_fpga_ipsec_rule *rule)
 {
 	int ret;
 
-	mutex_lock(&ipsec_dev->rules_lock);
-	ret = _rule_delete(&ipsec_dev->rules, rule);
-	mutex_unlock(&ipsec_dev->rules_lock);
+	mutex_lock(&ipsec_dev->rules_rb_lock);
+	ret = _rule_delete(&ipsec_dev->rules_rb, rule);
+	mutex_unlock(&ipsec_dev->rules_rb_lock);
 
 	return ret;
 }
 
-static void restore_spec_mailbox(struct ipsec_rule *rule,
+static void restore_spec_mailbox(struct mlx5_fpga_ipsec_rule *rule,
 			  struct mlx5_fs_rule_notifier_attrs *attrs)
 {
 	char *misc_params_c = MLX5_ADDR_OF(fte_match_param,
@@ -1006,16 +1022,16 @@ static void restore_spec_mailbox(struct ipsec_rule *rule,
 	MLX5_SET(fte_match_set_misc, misc_params_v, outer_esp_spi,
 		 rule->saved_outer_esp_spi_value);
 	attrs->spec.flow_act->action |= rule->saved_action;
-	attrs->spec.flow_act->esp_id = (uintptr_t)rule->xfrm_ctx;
+	attrs->spec.flow_act->esp_id = (uintptr_t)rule->fpga_xfrm;
 }
 
 static void modify_spec_mailbox(struct mlx5_core_dev *mdev,
 				struct mlx5_fs_rule_notifier_attrs *attrs,
-				struct ipsec_rule *rule,
+				struct mlx5_fpga_ipsec_rule *rule,
 				bool is_egress)
 {
-	struct mlx5_accel_esp_xfrm_ctx *accel_xfrm_ctx =
-		(struct mlx5_accel_esp_xfrm_ctx *)attrs->spec.flow_act->esp_id;
+	struct mlx5_accel_esp_xfrm *accel_xfrm =
+		(struct mlx5_accel_esp_xfrm *)attrs->spec.flow_act->esp_id;
 	char *misc_params_c = MLX5_ADDR_OF(fte_match_param,
 					   attrs->spec.match_criteria,
 					   misc_parameters);
@@ -1027,9 +1043,8 @@ static void modify_spec_mailbox(struct mlx5_core_dev *mdev,
 		(MLX5_FLOW_CONTEXT_ACTION_ENCRYPT |
 		 MLX5_FLOW_CONTEXT_ACTION_DECRYPT);
 
-	rule->xfrm_ctx = container_of(accel_xfrm_ctx,
-				      struct mlx5_fpga_ipsec_xfrm_ctx,
-				      accel_xfrm_ctx);
+	rule->fpga_xfrm = container_of(accel_xfrm, struct mlx5_fpga_esp_xfrm,
+				       accel_xfrm);
 
 	rule->saved_outer_esp_spi_mask =
 			MLX5_GET(fte_match_set_misc, misc_params_c,
@@ -1057,18 +1072,15 @@ static void modify_spec_mailbox(struct mlx5_core_dev *mdev,
 }
 
 
-static int fpga_fs_rule_notifier(struct notifier_block *nb, unsigned long action,
+static int fpga_fs_rule_notifier(struct mlx5_fpga_ipsec *fipsec,
+				 unsigned long action,
 				 void *data, bool is_egress)
 {
-	struct mlx5_fpga_ipsec_notifier_block *fpga_nb =
-		container_of(nb, struct mlx5_fpga_ipsec_notifier_block,
-			     fs_notifier);
-	struct mlx5_fpga_device *fdev = fpga_nb->fpga_device;
-	struct mlx5_fpga_ipsec *ipsec = fdev->ipsec;
+	struct mlx5_fpga_device *fdev = fipsec->fdev;
 	struct mlx5_core_dev *mdev = fdev->mdev;
 	struct mlx5_fs_rule_notifier_attrs *attrs = data;
 	bool is_esp = attrs->spec.flow_act->esp_id;
-	struct ipsec_rule *rule;
+	struct mlx5_fpga_ipsec_rule *rule;
 	int ret;
 
 	switch (action) {
@@ -1083,7 +1095,7 @@ static int fpga_fs_rule_notifier(struct notifier_block *nb, unsigned long action
 		if (!rule)
 			return notifier_from_errno(-ENOMEM);
 
-		ret = mlx5_create_fpga_ipsec_ctx(fdev, attrs, is_egress);
+		ret = mlx5_fpga_ipsec_create_sa_ctx(fipsec, attrs, is_egress);
 		if (ret) {
 			kfree(rule);
 			return notifier_from_errno(ret);
@@ -1092,56 +1104,52 @@ static int fpga_fs_rule_notifier(struct notifier_block *nb, unsigned long action
 		rule->ft = attrs->ft;
 		rule->id = attrs->id;
 		modify_spec_mailbox(mdev, attrs, rule, is_egress);
-		WARN_ON(rule_insert(ipsec, rule));
+		WARN_ON(rule_insert(fipsec, rule));
 		break;
 
 	case MLX5_FS_RULE_NOTIFY_ADD_POST:
-		rule = rule_search(ipsec, attrs->ft, attrs->id);
+		rule = rule_search(fipsec, attrs->ft, attrs->id);
 		if (!rule)
 			break;
 
 		restore_spec_mailbox(rule, attrs);
 		if (!attrs->success) {
-			mlx5_delete_fpga_xfrm_ctx(rule->xfrm_ctx);
-			rule_delete(ipsec, rule);
+			mlx5_fpga_ipsec_delete_sa_ctx(rule->fpga_xfrm);
+			rule_delete(fipsec, rule);
 		}
 		break;
 
 	case MLX5_FS_RULE_NOTIFY_DEL:
-		rule = rule_search(ipsec, attrs->ft, attrs->id);
+		rule = rule_search(fipsec, attrs->ft, attrs->id);
 		if (!rule)
 			break;
 
-		mlx5_delete_fpga_xfrm_ctx(rule->xfrm_ctx);
-		rule_delete(ipsec, rule);
+		mlx5_fpga_ipsec_delete_sa_ctx(rule->fpga_xfrm);
+		rule_delete(fipsec, rule);
 		break;
 	}
 
 	return NOTIFY_DONE;
 }
 
-static int fpga_fs_rule_notifier_egress(struct notifier_block *nb, unsigned long action,
-			    void *data)
-{
-	return fpga_fs_rule_notifier(nb, action, data, true);
-}
-
 static int fpga_fs_rule_notifier_ingress(struct notifier_block *nb, unsigned long action,
 			     void *data)
 {
-	return fpga_fs_rule_notifier(nb, action, data, false);
+	struct mlx5_fpga_ipsec *fipsec =
+			container_of(nb, struct mlx5_fpga_ipsec,
+				     fs_notifier_ingress);
+
+	return fpga_fs_rule_notifier(fipsec, action, data, false);
 }
 
-static int init_notifier_block(struct mlx5_fpga_device *fdev,
-			       struct mlx5_fpga_ipsec_notifier_block *nb,
-			       enum mlx5_flow_namespace_type type,
-			       notifier_fn_t notifier_fn)
+static int fpga_fs_rule_notifier_egress(struct notifier_block *nb, unsigned long action,
+			    void *data)
 {
-	struct mlx5_core_dev *mdev = fdev->mdev;
+	struct mlx5_fpga_ipsec *fipsec =
+			container_of(nb, struct mlx5_fpga_ipsec,
+				     fs_notifier_egress);
 
-	nb->fpga_device = fdev;
-	nb->fs_notifier.notifier_call = notifier_fn;
-	return mlx5_fs_rule_notifier_register(mdev, type, &nb->fs_notifier);
+	return fpga_fs_rule_notifier(fipsec, action, data, true);
 }
 
 int mlx5_fpga_ipsec_init(struct mlx5_core_dev *mdev)
@@ -1158,6 +1166,8 @@ int mlx5_fpga_ipsec_init(struct mlx5_core_dev *mdev)
 	if (!fdev->ipsec)
 		return -ENOMEM;
 
+	fdev->ipsec->fdev = fdev;
+
 	err = mlx5_fpga_get_sbu_caps(fdev, sizeof(fdev->ipsec->caps),
 				     fdev->ipsec->caps);
 	if (err) {
@@ -1169,25 +1179,26 @@ int mlx5_fpga_ipsec_init(struct mlx5_core_dev *mdev)
 	INIT_LIST_HEAD(&fdev->ipsec->pending_cmds);
 	spin_lock_init(&fdev->ipsec->pending_cmds_lock);
 
-	err = init_notifier_block(fdev, &fdev->ipsec->fs_notifier_ingress,
-				  MLX5_FLOW_NAMESPACE_BYPASS,
-				  fpga_fs_rule_notifier_ingress);
+	fdev->ipsec->fs_notifier_ingress.notifier_call =
+			fpga_fs_rule_notifier_ingress;
+	err = mlx5_fs_rule_notifier_register(mdev, MLX5_FLOW_NAMESPACE_BYPASS,
+					     &fdev->ipsec->fs_notifier_ingress);
 	if (err) {
 		mlx5_fpga_err(fdev, "Failed to register ingress rule notifier: %d\n",
 			      err);
 		goto error;
 	}
 
-	err = init_notifier_block(fdev, &fdev->ipsec->fs_notifier_egress,
-				  MLX5_FLOW_NAMESPACE_EGRESS,
-				  fpga_fs_rule_notifier_egress);
+	fdev->ipsec->fs_notifier_egress.notifier_call =
+			fpga_fs_rule_notifier_egress;
+	err = mlx5_fs_rule_notifier_register(mdev, MLX5_FLOW_NAMESPACE_EGRESS,
+					     &fdev->ipsec->fs_notifier_egress);
 	if (err) {
 		mlx5_fpga_err(fdev, "Failed to register egress rule notifier: %d\n",
 			      err);
 		goto err_unregister_notifier_ingress;
 	}
 
-	fdev->ipsec->rules = RB_ROOT;
 	init_attr.rx_size = SBU_QP_QUEUE_SIZE;
 	init_attr.tx_size = SBU_QP_QUEUE_SIZE;
 	init_attr.recv_cb = mlx5_fpga_ipsec_recv;
@@ -1204,6 +1215,10 @@ int mlx5_fpga_ipsec_init(struct mlx5_core_dev *mdev)
 	err = rhashtable_init(&fdev->ipsec->sa_hash, &rhash_sa);
 	if (err)
 		goto err_destroy_conn;
+	mutex_init(&fdev->ipsec->sa_hash_lock);
+
+	fdev->ipsec->rules_rb = RB_ROOT;
+	mutex_init(&fdev->ipsec->rules_rb_lock);
 
 	err = mlx5_fpga_ipsec_enable_supported_caps(mdev);
 	if (err) {
@@ -1223,12 +1238,12 @@ err_destroy_conn:
 err_unregister_notifier_egress:
 	WARN_ON(mlx5_fs_rule_notifier_unregister(mdev,
 						 MLX5_FLOW_NAMESPACE_EGRESS,
-						 &fdev->ipsec->fs_notifier_egress.fs_notifier));
+						 &fdev->ipsec->fs_notifier_egress));
 
 err_unregister_notifier_ingress:
 	WARN_ON(mlx5_fs_rule_notifier_unregister(mdev,
 						 MLX5_FLOW_NAMESPACE_BYPASS,
-						 &fdev->ipsec->fs_notifier_ingress.fs_notifier));
+						 &fdev->ipsec->fs_notifier_ingress));
 error:
 	kfree(fdev->ipsec);
 	fdev->ipsec = NULL;
@@ -1237,11 +1252,11 @@ error:
 
 static void destroy_rules_rb(struct rb_root *root)
 {
-	struct ipsec_rule *r, *tmp;
+	struct mlx5_fpga_ipsec_rule *r, *tmp;
 
 	rbtree_postorder_for_each_entry_safe(r, tmp, root, node) {
 		rb_erase(&r->node, root);
-		mlx5_delete_fpga_xfrm_ctx(r->xfrm_ctx);
+		mlx5_fpga_ipsec_delete_sa_ctx(r->fpga_xfrm);
 		kfree(r);
 	}
 }
@@ -1253,15 +1268,18 @@ void mlx5_fpga_ipsec_cleanup(struct mlx5_core_dev *mdev)
 	if (!mlx5_fpga_is_ipsec_device(mdev))
 		return;
 
-	destroy_rules_rb(&fdev->ipsec->rules);
+	destroy_rules_rb(&fdev->ipsec->rules_rb);
 	rhashtable_destroy(&fdev->ipsec->sa_hash);
+
 	mlx5_fpga_sbu_conn_destroy(fdev->ipsec->conn);
+
 	WARN_ON(mlx5_fs_rule_notifier_unregister(mdev,
 						 MLX5_FLOW_NAMESPACE_EGRESS,
-						 &fdev->ipsec->fs_notifier_egress.fs_notifier));
+						 &fdev->ipsec->fs_notifier_egress));
 	WARN_ON(mlx5_fs_rule_notifier_unregister(mdev,
 						 MLX5_FLOW_NAMESPACE_BYPASS,
-						 &fdev->ipsec->fs_notifier_ingress.fs_notifier));
+						 &fdev->ipsec->fs_notifier_ingress));
+
 	kfree(fdev->ipsec);
 	fdev->ipsec = NULL;
 }
@@ -1315,11 +1333,11 @@ int mlx5_fpga_esp_validate_xfrm_attrs(struct mlx5_core_dev *mdev,
 	return 0;
 }
 
-struct mlx5_accel_esp_xfrm_ctx *mlx5_fpga_esp_create_xfrm_ctx(struct mlx5_core_dev *mdev,
-							      const struct mlx5_accel_esp_xfrm_attrs *attrs,
-							      u32 flags)
+struct mlx5_accel_esp_xfrm *mlx5_fpga_esp_create_xfrm(struct mlx5_core_dev *mdev,
+						      const struct mlx5_accel_esp_xfrm_attrs *attrs,
+						      u32 flags)
 {
-	struct mlx5_fpga_ipsec_xfrm_ctx *ctx;
+	struct mlx5_fpga_esp_xfrm *fpga_xfrm;
 
 	if (!(flags & MLX5_ACCEL_XFRM_FLAG_REQUIRE_METADATA)) {
 		mlx5_core_warn(mdev, "Tried to create an esp action without metadata\n");
@@ -1331,32 +1349,31 @@ struct mlx5_accel_esp_xfrm_ctx *mlx5_fpga_esp_create_xfrm_ctx(struct mlx5_core_d
 		return ERR_PTR(-EOPNOTSUPP);
 	}
 
-	ctx = kzalloc(sizeof(*ctx), GFP_KERNEL);
-	if (!ctx)
+	fpga_xfrm = kzalloc(sizeof(*fpga_xfrm), GFP_KERNEL);
+	if (!fpga_xfrm)
 		return ERR_PTR(-ENOMEM);
 
-	mutex_init(&ctx->lock);
+	mutex_init(&fpga_xfrm->lock);
+	memcpy(&fpga_xfrm->accel_xfrm.attrs, attrs,
+	       sizeof(fpga_xfrm->accel_xfrm.attrs));
 
-	memcpy(&ctx->accel_xfrm_ctx.attrs, attrs,
-	       sizeof(ctx->accel_xfrm_ctx.attrs));
-
-	return &ctx->accel_xfrm_ctx;
+	return &fpga_xfrm->accel_xfrm;
 }
 
-void mlx5_fpga_esp_destroy_xfrm_ctx(struct mlx5_accel_esp_xfrm_ctx *ctx)
+void mlx5_fpga_esp_destroy_xfrm(struct mlx5_accel_esp_xfrm *xfrm)
 {
-	struct mlx5_fpga_ipsec_xfrm_ctx *fpga_ctx =
-			container_of(ctx, struct mlx5_fpga_ipsec_xfrm_ctx, accel_xfrm_ctx);
+	struct mlx5_fpga_esp_xfrm *fpga_xfrm =
+			container_of(xfrm, struct mlx5_fpga_esp_xfrm, accel_xfrm);
 	/* assuming no sa_ctx are connected to this xfrm_ctx */
-	kfree(fpga_ctx);
+	kfree(fpga_xfrm);
 }
 
-int mlx5_fpga_esp_modify_xfrm_ctx(struct mlx5_accel_esp_xfrm_ctx *xfrm,
+int mlx5_fpga_esp_modify_xfrm_ctx(struct mlx5_accel_esp_xfrm *xfrm,
 				  const struct mlx5_accel_esp_xfrm_attrs *attrs)
 {
 	struct mlx5_core_dev *mdev = xfrm->mdev;
 	struct mlx5_fpga_device *fpga_dev = mdev->fpga;
-	struct mlx5_fpga_ipsec_xfrm_ctx *fpga_ctx;
+	struct mlx5_fpga_esp_xfrm *fpga_ctx;
 	struct mlx5_fpga_ipsec_sa hw_sa;
 	struct mlx5_fpga_ipsec *fipsec = mdev->fpga->ipsec;
 	int err = 0;
@@ -1374,8 +1391,7 @@ int mlx5_fpga_esp_modify_xfrm_ctx(struct mlx5_accel_esp_xfrm_ctx *xfrm,
 		return -EOPNOTSUPP;
 	}
 
-	fpga_ctx = container_of(xfrm, struct mlx5_fpga_ipsec_xfrm_ctx,
-			        accel_xfrm_ctx);
+	fpga_ctx = container_of(xfrm, struct mlx5_fpga_esp_xfrm, accel_xfrm);
 
 	mutex_lock(&fpga_ctx->lock);
 
@@ -1384,27 +1400,28 @@ int mlx5_fpga_esp_modify_xfrm_ctx(struct mlx5_accel_esp_xfrm_ctx *xfrm,
 
 	memcpy(&hw_sa, &fpga_ctx->sa_ctx->hw_sa, sizeof(hw_sa));
 	mutex_lock(&fipsec->sa_hash_lock);
-	WARN_ON(rhashtable_remove_fast(&fipsec->sa_hash, &fpga_ctx->sa_ctx->hash,
-				       rhash_sa));
-	mlx5_fpga_ipsec_build_hw_sa_xfrm(xfrm->mdev, attrs, &fpga_ctx->sa_ctx->hw_sa);
+	WARN_ON(rhashtable_remove_fast(&fipsec->sa_hash,
+				       &fpga_ctx->sa_ctx->hash, rhash_sa));
+	mlx5_fpga_ipsec_build_hw_xfrm(xfrm->mdev, attrs,
+				      &fpga_ctx->sa_ctx->hw_sa);
 	err = rhashtable_insert_fast(&fipsec->sa_hash,
 			&fpga_ctx->sa_ctx->hash,
 			rhash_sa);
 	if (err)
 		goto rollback_sa;
 
-	err = _mlx5_create_update_fpga_ipsec_ctx(fpga_dev, &hw_sa,
-			MLX5_FPGA_IPSEC_CMD_MOD_SA_V2);
-
+	err = mlx5_update_fpga_ipsec_hw_sa(fpga_dev, &hw_sa,
+					   MLX5_FPGA_IPSEC_CMD_MOD_SA_V2);
 	if (err)
-		WARN_ON(rhashtable_remove_fast(&fipsec->sa_hash, &fpga_ctx->sa_ctx->hash,
-					rhash_sa));
+		WARN_ON(rhashtable_remove_fast(&fipsec->sa_hash,
+					       &fpga_ctx->sa_ctx->hash,
+					       rhash_sa));
 rollback_sa:
 	if (err) {
 		memcpy(&fpga_ctx->sa_ctx->hw_sa, &hw_sa, sizeof(hw_sa));
 		WARN_ON(rhashtable_insert_fast(&fipsec->sa_hash,
-					&fpga_ctx->sa_ctx->hash,
-					rhash_sa));
+					       &fpga_ctx->sa_ctx->hash,
+					       rhash_sa));
 	}
 	mutex_unlock(&fipsec->sa_hash_lock);
 change_sw_rep:

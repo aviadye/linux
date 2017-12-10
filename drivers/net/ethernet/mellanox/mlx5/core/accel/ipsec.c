@@ -77,23 +77,23 @@ void mlx5_accel_ipsec_cleanup(struct mlx5_core_dev *mdev)
 	mlx5_fpga_ipsec_cleanup(mdev);
 }
 
-struct mlx5_accel_esp_xfrm_ctx *mlx5_accel_esp_create_xfrm_ctx(struct mlx5_core_dev *mdev,
-							       const struct mlx5_accel_esp_xfrm_attrs *attrs,
-							       u32 flags)
+struct mlx5_accel_esp_xfrm *mlx5_accel_esp_create_xfrm(struct mlx5_core_dev *mdev,
+						       const struct mlx5_accel_esp_xfrm_attrs *attrs,
+						       u32 flags)
 {
-	struct mlx5_accel_esp_xfrm_ctx *ctx;
+	struct mlx5_accel_esp_xfrm *xfrm;
 
-	ctx = mlx5_fpga_esp_create_xfrm_ctx(mdev, attrs, flags);
-	if (IS_ERR(ctx))
-		return ctx;
+	xfrm = mlx5_fpga_esp_create_xfrm(mdev, attrs, flags);
+	if (IS_ERR(xfrm))
+		return xfrm;
 
-	ctx->mdev = mdev;
-	return ctx;
+	xfrm->mdev = mdev;
+	return xfrm;
 }
-EXPORT_SYMBOL_GPL(mlx5_accel_esp_create_xfrm_ctx);
+EXPORT_SYMBOL_GPL(mlx5_accel_esp_create_xfrm);
 
-void mlx5_accel_esp_destroy_xfrm_ctx(struct mlx5_accel_esp_xfrm_ctx *ctx)
+void mlx5_accel_esp_destroy_xfrm(struct mlx5_accel_esp_xfrm *xfrm)
 {
-	mlx5_fpga_esp_destroy_xfrm_ctx(ctx);
+	mlx5_fpga_esp_destroy_xfrm(xfrm);
 }
-EXPORT_SYMBOL_GPL(mlx5_accel_esp_destroy_xfrm_ctx);
+EXPORT_SYMBOL_GPL(mlx5_accel_esp_destroy_xfrm);
