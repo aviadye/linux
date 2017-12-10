@@ -363,6 +363,46 @@ out:
 	return res;
 }
 
+//TODO: change this function
+static int _mlx5_create_update_fpga_ipsec_ctx(struct mlx5_fpga_device *fpga,
+		struct mlx5_fpga_ipsec_sa *hw_sa,
+		enum mlx5_fpga_ipsec_cmd cmd)
+{
+	int err;
+	size_t sa_cmd_size;
+	struct mlx5_fpga_ipsec_sa *sa;
+	struct mlx5_ipsec_command_context *mailbox_ctx;
+	struct mlx5_core_dev *dev = fpga->mdev;
+	struct mlx5_fpga_ipsec *fipsec = fpga->ipsec;
+
+	hw_sa->ipsec_sa_v1.cmd = htonl(cmd);
+	if (MLX5_GET(ipsec_extended_cap, fipsec->caps, v2_command))
+		sa_cmd_size = sizeof(*hw_sa);
+	else
+		sa_cmd_size = sizeof(hw_sa->ipsec_sa_v1);
+
+	mailbox_ctx = (struct mlx5_ipsec_command_context *)
+		mlx5_fpga_ipsec_cmd_exec(dev, hw_sa, sa_cmd_size);
+	if (IS_ERR(mailbox_ctx))
+		return PTR_ERR(mailbox_ctx);
+
+	err = mlx5_fpga_ipsec_cmd_wait(mailbox_ctx);
+	if (err)
+		goto out;
+
+	sa = (struct mlx5_fpga_ipsec_sa *)&mailbox_ctx->command;
+	if (sa->ipsec_sa_v1.sw_sa_handle != mailbox_ctx->resp.sw_sa_handle) {
+		mlx5_fpga_err(fpga, "mismatch SA handle. cmd 0x%08x vs resp 0x%08x\n",
+				ntohl(sa->ipsec_sa_v1.sw_sa_handle),
+				ntohl(mailbox_ctx->resp.sw_sa_handle));
+		err = -EIO;
+	}
+
+out:
+	kfree(mailbox_ctx);
+	return err;
+}
+
 u32 mlx5_fpga_ipsec_device_caps(struct mlx5_core_dev *mdev)
 {
 	struct mlx5_fpga_device *fdev = mdev->fpga;
@@ -723,45 +763,6 @@ static bool mlx5_is_fpga_egress_ipsec_rule(struct mlx5_core_dev *dev,
 	return true;
 }
 
-static int _mlx5_create_update_fpga_ipsec_ctx(struct mlx5_fpga_device *fpga,
-		struct mlx5_fpga_ipsec_sa *hw_sa,
-		enum mlx5_fpga_ipsec_cmd cmd)
-{
-	int err;
-	size_t sa_cmd_size;
-	struct mlx5_fpga_ipsec_sa *sa;
-	struct mlx5_ipsec_command_context *mailbox_ctx;
-	struct mlx5_core_dev *dev = fpga->mdev;
-	struct mlx5_fpga_ipsec *fipsec = fpga->ipsec;
-
-	hw_sa->ipsec_sa_v1.cmd = htonl(cmd);
-	if (MLX5_GET(ipsec_extended_cap, fipsec->caps, v2_command))
-		sa_cmd_size = sizeof(*hw_sa);
-	else
-		sa_cmd_size = sizeof(hw_sa->ipsec_sa_v1);
-
-	mailbox_ctx = (struct mlx5_ipsec_command_context *)
-		mlx5_fpga_ipsec_cmd_exec(dev, hw_sa, sa_cmd_size);
-	if (IS_ERR(mailbox_ctx))
-		return PTR_ERR(mailbox_ctx);
-
-	err = mlx5_fpga_ipsec_cmd_wait(mailbox_ctx);
-	if (err)
-		goto out;
-
-	sa = (struct mlx5_fpga_ipsec_sa *)&mailbox_ctx->command;
-	if (sa->ipsec_sa_v1.sw_sa_handle != mailbox_ctx->resp.sw_sa_handle) {
-		mlx5_fpga_err(fpga, "mismatch SA handle. cmd 0x%08x vs resp 0x%08x\n",
-				ntohl(sa->ipsec_sa_v1.sw_sa_handle),
-				ntohl(mailbox_ctx->resp.sw_sa_handle));
-		err = -EIO;
-	}
-
-out:
-	kfree(mailbox_ctx);
-	return err;
-}
-
 static int mlx5_create_fpga_ipsec_ctx(struct mlx5_fpga_device *fpga,
 				      struct mlx5_fs_rule_notifier_attrs *attrs,
 				      bool is_egress)
@@ -849,9 +850,6 @@ static void mlx5_release_fpga_ipsec_sa_ctx(struct mlx5_fpga_ipsec_sa_ctx *sa_ctx
 	int sa_cmd_size;
 	void *context;
 
-	WARN_ON(rhashtable_remove_fast(&fipsec->sa_hash, &sa_ctx->hash,
-				       rhash_sa));
-
 	if (MLX5_GET(ipsec_extended_cap, fipsec->caps, v2_command)) {
 		sa_ctx->hw_sa.ipsec_sa_v1.cmd =
 				htonl(MLX5_FPGA_IPSEC_CMD_DEL_SA_V2);
@@ -868,6 +866,11 @@ static void mlx5_release_fpga_ipsec_sa_ctx(struct mlx5_fpga_ipsec_sa_ctx *sa_ctx
 		return;
 
 	WARN_ON(mlx5_accel_ipsec_sa_cmd_wait(context));
+
+	mutex_lock(&fipsec->sa_hash_lock);
+	WARN_ON(rhashtable_remove_fast(&fipsec->sa_hash, &sa_ctx->hash,
+				       rhash_sa));
+	mutex_unlock(&fipsec->sa_hash_lock);
 }
 
 static void mlx5_delete_fpga_xfrm_ctx(struct mlx5_fpga_ipsec_xfrm_ctx *ctx)
