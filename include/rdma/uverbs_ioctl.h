@@ -353,38 +353,41 @@ static inline const struct uverbs_attr *uverbs_attr_get(const struct uverbs_attr
 }
 
 static inline int uverbs_copy_to(const struct uverbs_attr_bundle *attrs_bundle,
-				 size_t idx, const void *from)
+				 size_t idx, const void *from, size_t size)
 {
 	const struct uverbs_attr *attr = uverbs_attr_get(attrs_bundle, idx);
 	u16 flags;
+	size_t min_size = min_t(size_t, attr->ptr_attr.len, size);
 
 	if (IS_ERR(attr))
 		return PTR_ERR(attr);
 
 	flags = attr->ptr_attr.flags | UVERBS_ATTR_F_VALID_OUTPUT;
-	return (!copy_to_user(attr->ptr_attr.ptr, from, attr->ptr_attr.len) &&
+	return (!copy_to_user(attr->ptr_attr.ptr, from, min_size) &&
 		!put_user(flags, &attr->uattr->flags)) ? 0 : -EFAULT;
 }
 
-static inline int _uverbs_copy_from(void *to, size_t to_size,
+static inline int _uverbs_copy_from(void *to,
 				    const struct uverbs_attr_bundle *attrs_bundle,
-				    size_t idx)
+				    size_t idx,
+				    size_t size)
 {
 	const struct uverbs_attr *attr = uverbs_attr_get(attrs_bundle, idx);
+	size_t min_size = min_t(size_t, size, attr->ptr_attr.len);
 
 	if (IS_ERR(attr))
 		return PTR_ERR(attr);
 
-	if (to_size <= sizeof(((struct ib_uverbs_attr *)0)->data))
-		memcpy(to, &attr->ptr_attr.data, attr->ptr_attr.len);
-	else if (copy_from_user(to, attr->ptr_attr.ptr, attr->ptr_attr.len))
+	if (attr->ptr_attr.len <= sizeof(((struct ib_uverbs_attr *)0)->data))
+		memcpy(to, &attr->ptr_attr.data, min_size);
+	else if (copy_from_user(to, attr->ptr_attr.ptr, min_size))
 		return -EFAULT;
 
 	return 0;
 }
 
 #define uverbs_copy_from(to, attrs_bundle, idx)				      \
-	_uverbs_copy_from(to, sizeof(*(to)), attrs_bundle, idx)
+	_uverbs_copy_from(to, attrs_bundle, idx, sizeof(*to))
 
 /* =================================================
  *	 Definitions -> Specs infrastructure
