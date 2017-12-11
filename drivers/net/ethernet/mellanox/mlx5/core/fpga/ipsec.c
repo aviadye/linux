@@ -55,7 +55,6 @@
 
 #define MLX5_FPGA_IPSEC_CAP_NO_TRAILER		BIT(0)
 
-
 enum mlx5_fpga_ipsec_cmd {
 	MLX5_FPGA_IPSEC_CMD_ADD_SA = 0,
 	MLX5_FPGA_IPSEC_CMD_DEL_SA = 1,
@@ -403,7 +402,7 @@ u32 mlx5_fpga_ipsec_device_caps(struct mlx5_core_dev *mdev)
 	u32 ret = 0;
 
 	if (mlx5_fpga_is_ipsec_device(mdev))
-		ret |= MLX5_ACCEL_IPSEC_DEVICE;
+		ret |= MLX5_ACCEL_IPSEC_CAP_DEVICE;
 	else
 		return ret;
 
@@ -411,19 +410,19 @@ u32 mlx5_fpga_ipsec_device_caps(struct mlx5_core_dev *mdev)
 		return ret;
 
 	if (MLX5_GET(ipsec_extended_cap, fdev->ipsec->caps, esp))
-		ret |= MLX5_ACCEL_IPSEC_ESP;
+		ret |= MLX5_ACCEL_IPSEC_CAP_ESP;
 
 	if (MLX5_GET(ipsec_extended_cap, fdev->ipsec->caps, ipv6))
-		ret |= MLX5_ACCEL_IPSEC_IPV6;
+		ret |= MLX5_ACCEL_IPSEC_CAP_IPV6;
 
 	if (MLX5_GET(ipsec_extended_cap, fdev->ipsec->caps, lso))
-		ret |= MLX5_ACCEL_IPSEC_LSO;
+		ret |= MLX5_ACCEL_IPSEC_CAP_LSO;
 
 	if (MLX5_GET(ipsec_extended_cap, fdev->ipsec->caps, rx_no_trailer))
-		ret |= MLX5_ACCEL_IPSEC_NO_TRAILER;
+		ret |= MLX5_ACCEL_IPSEC_CAP_RX_NO_TRAILER;
 
 	if (MLX5_GET(ipsec_extended_cap, fdev->ipsec->caps, v2_command))
-		ret |= MLX5_ACCEL_IPSEC_V2_CMD;
+		ret |= MLX5_ACCEL_IPSEC_CAP_V2_CMD;
 
 	return ret;
 }
@@ -521,7 +520,7 @@ static int mlx5_fpga_ipsec_enable_supported_caps(struct mlx5_core_dev *mdev)
 	u32 dev_caps = mlx5_fpga_ipsec_device_caps(mdev);
 	u32 flags = 0;
 
-	if (dev_caps & MLX5_ACCEL_IPSEC_NO_TRAILER)
+	if (dev_caps & MLX5_ACCEL_IPSEC_CAP_RX_NO_TRAILER)
 		flags |= MLX5_FPGA_IPSEC_CAP_NO_TRAILER;
 
 	return mlx5_fpga_ipsec_set_caps(mdev, flags);
@@ -684,14 +683,14 @@ static bool mlx5_is_fpga_ipsec_rule(struct mlx5_core_dev *dev,
 	      ipv6_flow))
 		return false;
 
-	if (!(ipsec_dev_caps & MLX5_ACCEL_IPSEC_DEVICE))
+	if (!(ipsec_dev_caps & MLX5_ACCEL_IPSEC_CAP_DEVICE))
 		return false;
 
-	if (!(ipsec_dev_caps & MLX5_ACCEL_IPSEC_ESP) &&
+	if (!(ipsec_dev_caps & MLX5_ACCEL_IPSEC_CAP_ESP) &&
 	    mlx5_fs_is_outer_ipsec_flow(match_c))
 		return false;
 
-	if (!(ipsec_dev_caps & MLX5_ACCEL_IPSEC_IPV6) &&
+	if (!(ipsec_dev_caps & MLX5_ACCEL_IPSEC_CAP_IPV6) &&
 	    ipv6_flow)
 		return false;
 

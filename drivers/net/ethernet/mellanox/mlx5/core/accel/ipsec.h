@@ -40,7 +40,7 @@
 #include <linux/mlx5/accel.h>
 
 #define MLX5_IPSEC_DEV(mdev) (mlx5_accel_ipsec_device_caps(mdev) & \
-			      MLX5_ACCEL_IPSEC_DEVICE)
+			      MLX5_ACCEL_IPSEC_CAP_DEVICE)
 
 unsigned int mlx5_accel_ipsec_counters_count(struct mlx5_core_dev *mdev);
 int mlx5_accel_ipsec_counters_read(struct mlx5_core_dev *mdev, u64 *counters,
