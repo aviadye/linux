@@ -42,7 +42,6 @@ enum mlx5_accel_esp_flags {
 	MLX5_ACCEL_ESP_FLAGS_TUNNEL            = 0,    /* Default */
 	MLX5_ACCEL_ESP_FLAGS_TRANSPORT         = 1UL << 0,
 	MLX5_ACCEL_ESP_FLAGS_ESN_TRIGGERED     = 1UL << 1,
-	/* TODO: Ask Boris if we need ESN_ENABLED flag */
 	MLX5_ACCEL_ESP_FLAGS_ESN_STATE_OVERLAP = 1UL << 2,
 };
 
