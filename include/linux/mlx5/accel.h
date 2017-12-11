@@ -118,6 +118,8 @@ struct mlx5_accel_esp_xfrm *mlx5_accel_esp_create_xfrm(struct mlx5_core_dev *mde
 
 void mlx5_accel_esp_destroy_xfrm(struct mlx5_accel_esp_xfrm *xfrm);
 
+int mlx5_accel_esp_modify_xfrm(struct mlx5_accel_esp_xfrm *xfrm,
+			       const struct mlx5_accel_esp_xfrm_attrs *attrs);
 
 #else
 
@@ -130,6 +132,12 @@ static inline struct mlx5_accel_esp_xfrm *mlx5_accel_esp_create_xfrm(struct mlx5
 
 static inline void mlx5_accel_esp_destroy_xfrm(struct mlx5_accel_ipsec_xfrm *xfrm)
 {
+}
+
+static inline int mlx5_accel_esp_modify_xfrm(struct mlx5_accel_esp_xfrm *xfrm,
+					     const struct mlx5_accel_esp_xfrm_attrs *attrs)
+{
+	return -EOPNOTSUPP;
 }
 
 #endif

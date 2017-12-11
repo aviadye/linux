@@ -1384,14 +1384,15 @@ void mlx5_fpga_esp_destroy_xfrm(struct mlx5_accel_esp_xfrm *xfrm)
 	kfree(fpga_xfrm);
 }
 
-int mlx5_fpga_esp_modify_xfrm_ctx(struct mlx5_accel_esp_xfrm *xfrm,
-				  const struct mlx5_accel_esp_xfrm_attrs *attrs)
+int mlx5_fpga_esp_modify_xfrm(struct mlx5_accel_esp_xfrm *xfrm,
+			      const struct mlx5_accel_esp_xfrm_attrs *attrs)
 {
 	struct mlx5_core_dev *mdev = xfrm->mdev;
-	struct mlx5_fpga_device *fpga_dev = mdev->fpga;
-	struct mlx5_fpga_esp_xfrm *fpga_ctx;
-	struct mlx5_fpga_ipsec_sa hw_sa;
-	struct mlx5_fpga_ipsec *fipsec = mdev->fpga->ipsec;
+	struct mlx5_fpga_device *fdev = mdev->fpga;
+	struct mlx5_fpga_ipsec *fipsec = fdev->ipsec;
+	struct mlx5_fpga_esp_xfrm *fpga_xfrm;
+	struct mlx5_fpga_ipsec_sa org_hw_sa;
+
 	int err = 0;
 
 	if (!memcmp(&xfrm->attrs, attrs, sizeof(xfrm->attrs)))
@@ -1402,47 +1403,55 @@ int mlx5_fpga_esp_modify_xfrm_ctx(struct mlx5_accel_esp_xfrm *xfrm,
 		return -EOPNOTSUPP;
 	}
 
-	if (is_v2_sadb_supported(fpga_dev->ipsec)) {
+	if (is_v2_sadb_supported(fipsec)) {
 		mlx5_core_warn(mdev, "Modify esp is not supported\n");
 		return -EOPNOTSUPP;
 	}
 
-	fpga_ctx = container_of(xfrm, struct mlx5_fpga_esp_xfrm, accel_xfrm);
+	fpga_xfrm = container_of(xfrm, struct mlx5_fpga_esp_xfrm, accel_xfrm);
 
-	mutex_lock(&fpga_ctx->lock);
+	mutex_lock(&fpga_xfrm->lock);
 
-	if (!fpga_ctx->sa_ctx)
-		goto change_sw_rep;
+	if (!fpga_xfrm->sa_ctx)
+		/* Unbounded xfrm, chane only sw attrs */
+		goto change_sw_xfrm_attrs;
 
-	memcpy(&hw_sa, &fpga_ctx->sa_ctx->hw_sa, sizeof(hw_sa));
+	/* copy original hw sa */
+	memcpy(&org_hw_sa, &fpga_xfrm->sa_ctx->hw_sa, sizeof(org_hw_sa));
 	mutex_lock(&fipsec->sa_hash_lock);
+	/* remove original hw sa from hash */
 	WARN_ON(rhashtable_remove_fast(&fipsec->sa_hash,
-				       &fpga_ctx->sa_ctx->hash, rhash_sa));
+				       &fpga_xfrm->sa_ctx->hash, rhash_sa));
+	/* update hw_sa with new xfrm attrs*/
 	mlx5_fpga_ipsec_build_hw_xfrm(xfrm->mdev, attrs,
-				      &fpga_ctx->sa_ctx->hw_sa);
+				      &fpga_xfrm->sa_ctx->hw_sa);
+	/* try to insert new hw_sa to hash */
 	err = rhashtable_insert_fast(&fipsec->sa_hash,
-			&fpga_ctx->sa_ctx->hash,
+			&fpga_xfrm->sa_ctx->hash,
 			rhash_sa);
 	if (err)
 		goto rollback_sa;
 
-	err = mlx5_fpga_ipsec_update_hw_sa(fpga_dev, &hw_sa,
+	/* modify device with new hw_sa */
+	err = mlx5_fpga_ipsec_update_hw_sa(fdev, &org_hw_sa,
 					   MLX5_FPGA_IPSEC_CMD_MOD_SA_V2);
 	if (err)
 		WARN_ON(rhashtable_remove_fast(&fipsec->sa_hash,
-					       &fpga_ctx->sa_ctx->hash,
+					       &fpga_xfrm->sa_ctx->hash,
 					       rhash_sa));
 rollback_sa:
 	if (err) {
-		memcpy(&fpga_ctx->sa_ctx->hw_sa, &hw_sa, sizeof(hw_sa));
+		/* return original hw_sa to hash */
+		memcpy(&fpga_xfrm->sa_ctx->hw_sa, &org_hw_sa, sizeof(org_hw_sa));
 		WARN_ON(rhashtable_insert_fast(&fipsec->sa_hash,
-					       &fpga_ctx->sa_ctx->hash,
+					       &fpga_xfrm->sa_ctx->hash,
 					       rhash_sa));
 	}
 	mutex_unlock(&fipsec->sa_hash_lock);
-change_sw_rep:
+
+change_sw_xfrm_attrs:
 	if (!err)
 		memcpy(&xfrm->attrs, attrs, sizeof(xfrm->attrs));
-	mutex_unlock(&fpga_ctx->lock);
+	mutex_unlock(&fpga_xfrm->lock);
 	return err;
 }

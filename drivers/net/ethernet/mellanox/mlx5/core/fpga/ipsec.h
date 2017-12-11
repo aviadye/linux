@@ -60,6 +60,8 @@ struct mlx5_accel_esp_xfrm *mlx5_fpga_esp_create_xfrm(struct mlx5_core_dev *mdev
 						      const struct mlx5_accel_esp_xfrm_attrs *attrs,
 						      u32 flags);
 void mlx5_fpga_esp_destroy_xfrm(struct mlx5_accel_esp_xfrm *xfrm);
+int mlx5_fpga_esp_modify_xfrm(struct mlx5_accel_esp_xfrm *xfrm,
+			      const struct mlx5_accel_esp_xfrm_attrs *attrs);
 
 #else
 
@@ -129,6 +131,12 @@ static inline struct mlx5_accel_esp_xfrm *mlx5_fpga_esp_create_xfrm(struct mlx5_
 
 void mlx5_fpga_esp_destroy_xfrm(struct mlx5_accel_esp_xfrm *xfrm)
 {
+}
+
+int mlx5_fpga_esp_modify_xfrm(struct mlx5_accel_esp_xfrm *xfrm,
+			      const struct mlx5_accel_esp_xfrm_attrs *attrs);
+{
+	return -EOPNOTSUPP;
 }
 
 #endif /* CONFIG_MLX5_FPGA */
