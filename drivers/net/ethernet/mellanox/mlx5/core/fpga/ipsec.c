@@ -367,7 +367,7 @@ static inline bool is_v2_sadb_supported(struct mlx5_fpga_ipsec *fipsec)
 }
 
 
-static int mlx5_update_fpga_ipsec_hw_sa(struct mlx5_fpga_device *fdev,
+static int mlx5_fpga_ipsec_update_hw_sa(struct mlx5_fpga_device *fdev,
 					struct mlx5_fpga_ipsec_sa *hw_sa,
 					enum mlx5_fpga_ipsec_cmd cmd)
 {
@@ -794,7 +794,7 @@ void *mlx5_fpga_ipsec_create_sa_ctx(struct mlx5_core_dev *mdev,
 	/* Bound accel_xfrm to sa_ctx */
 	cmd = is_v2_sadb_supported(fdev->ipsec) ?
 		MLX5_FPGA_IPSEC_CMD_ADD_SA_V2 : MLX5_FPGA_IPSEC_CMD_ADD_SA;
-	err = mlx5_update_fpga_ipsec_hw_sa(fdev, &sa_ctx->hw_sa, cmd);
+	err = mlx5_fpga_ipsec_update_hw_sa(fdev, &sa_ctx->hw_sa, cmd);
 	if (err)
 		goto delete_hash;
 
@@ -892,7 +892,7 @@ static void mlx5_fpga_ipsec_release_sa_ctx(struct mlx5_fpga_ipsec_sa_ctx *sa_ctx
 			is_v2_sadb_supported(fdev->ipsec) ?
 					MLX5_FPGA_IPSEC_CMD_DEL_SA_V2 : MLX5_FPGA_IPSEC_CMD_DEL_SA;
 
-	err = mlx5_update_fpga_ipsec_hw_sa(fdev, &sa_ctx->hw_sa, cmd);
+	err = mlx5_fpga_ipsec_update_hw_sa(fdev, &sa_ctx->hw_sa, cmd);
 	if (err) {
 		WARN_ON(err);
 		return;
@@ -1426,7 +1426,7 @@ int mlx5_fpga_esp_modify_xfrm_ctx(struct mlx5_accel_esp_xfrm *xfrm,
 	if (err)
 		goto rollback_sa;
 
-	err = mlx5_update_fpga_ipsec_hw_sa(fpga_dev, &hw_sa,
+	err = mlx5_fpga_ipsec_update_hw_sa(fpga_dev, &hw_sa,
 					   MLX5_FPGA_IPSEC_CMD_MOD_SA_V2);
 	if (err)
 		WARN_ON(rhashtable_remove_fast(&fipsec->sa_hash,
