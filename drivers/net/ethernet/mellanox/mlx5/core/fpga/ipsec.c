@@ -358,6 +358,15 @@ static int mlx5_fpga_ipsec_cmd_wait(void *ctx)
 	return res;
 }
 
+
+static inline bool is_v2_sadb_supported(struct mlx5_fpga_ipsec *fipsec)
+{
+	if (MLX5_GET(ipsec_extended_cap, fipsec->caps, v2_command))
+		return true;
+	return false;
+}
+
+
 static int mlx5_update_fpga_ipsec_hw_sa(struct mlx5_fpga_device *fdev,
 					struct mlx5_fpga_ipsec_sa *hw_sa,
 					enum mlx5_fpga_ipsec_cmd cmd)
@@ -369,7 +378,7 @@ static int mlx5_update_fpga_ipsec_hw_sa(struct mlx5_fpga_device *fdev,
 	int err;
 
 	hw_sa->ipsec_sa_v1.cmd = htonl(cmd);
-	if (MLX5_GET(ipsec_extended_cap, fdev->ipsec->caps, v2_command))
+	if (is_v2_sadb_supported(fdev->ipsec))
 		sa_cmd_size = sizeof(*hw_sa);
 	else
 		sa_cmd_size = sizeof(hw_sa->ipsec_sa_v1);
@@ -420,9 +429,6 @@ u32 mlx5_fpga_ipsec_device_caps(struct mlx5_core_dev *mdev)
 
 	if (MLX5_GET(ipsec_extended_cap, fdev->ipsec->caps, rx_no_trailer))
 		ret |= MLX5_ACCEL_IPSEC_CAP_RX_NO_TRAILER;
-
-	if (MLX5_GET(ipsec_extended_cap, fdev->ipsec->caps, v2_command))
-		ret |= MLX5_ACCEL_IPSEC_CAP_V2_CMD;
 
 	return ret;
 }
@@ -786,7 +792,7 @@ void *mlx5_fpga_ipsec_create_sa_ctx(struct mlx5_core_dev *mdev,
 		goto unlock_hash;
 
 	/* Bound accel_xfrm to sa_ctx */
-	cmd = MLX5_GET(ipsec_extended_cap, fipsec->caps, v2_command) ?
+	cmd = is_v2_sadb_supported(fdev->ipsec) ?
 		MLX5_FPGA_IPSEC_CMD_ADD_SA_V2 : MLX5_FPGA_IPSEC_CMD_ADD_SA;
 	err = mlx5_update_fpga_ipsec_hw_sa(fdev, &sa_ctx->hw_sa, cmd);
 	if (err)
@@ -883,9 +889,8 @@ static void mlx5_fpga_ipsec_release_sa_ctx(struct mlx5_fpga_ipsec_sa_ctx *sa_ctx
 	struct mlx5_fpga_ipsec *fipsec = fdev->ipsec;
 	int err;
 	enum mlx5_fpga_ipsec_cmd cmd =
-			MLX5_GET(ipsec_extended_cap, fipsec->caps, v2_command) ?
+			is_v2_sadb_supported(fdev->ipsec) ?
 					MLX5_FPGA_IPSEC_CMD_DEL_SA_V2 : MLX5_FPGA_IPSEC_CMD_DEL_SA;
-
 
 	err = mlx5_update_fpga_ipsec_hw_sa(fdev, &sa_ctx->hw_sa, cmd);
 	if (err) {
@@ -1397,7 +1402,7 @@ int mlx5_fpga_esp_modify_xfrm_ctx(struct mlx5_accel_esp_xfrm *xfrm,
 		return -EOPNOTSUPP;
 	}
 
-	if (!MLX5_GET(ipsec_extended_cap, fipsec->caps, v2_command)) {
+	if (is_v2_sadb_supported(fpga_dev->ipsec)) {
 		mlx5_core_warn(mdev, "Modify esp is not supported\n");
 		return -EOPNOTSUPP;
 	}
