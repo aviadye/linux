@@ -210,6 +210,15 @@ static int uverbs_hot_unplug_completion_event_file(struct ib_uobject_file *uobj_
 	return 0;
 };
 
+#define UVERBS_METHOD(id)	uverbs_method_##id
+#define UVERBS_HANDLER(id)	uverbs_handler_##id
+
+#define DECLARE_COMMON_METHOD(id, ...)	\
+	DECLARE_UVERBS_METHOD(UVERBS_METHOD(id), id, UVERBS_HANDLER(id), ##__VA_ARGS__)
+
+#define DECLARE_COMMON_OBJECT(id, ...)	\
+	DECLARE_UVERBS_OBJECT(UVERBS_OBJECT(id), id, ##__VA_ARGS__)
+
 /*
  * This spec is used in order to pass information to the hardware driver in a
  * legacy way. Every verb that could get driver specific data should get this
@@ -250,9 +259,9 @@ static void create_udata(struct uverbs_attr_bundle *ctx,
 	}
 }
 
-static int uverbs_create_cq_handler(struct ib_device *ib_dev,
-				    struct ib_uverbs_file *file,
-				    struct uverbs_attr_bundle *attrs)
+static int UVERBS_HANDLER(UVERBS_CQ_CREATE)(struct ib_device *ib_dev,
+					    struct ib_uverbs_file *file,
+					    struct uverbs_attr_bundle *attrs)
 {
 	struct ib_ucontext *ucontext = file->ucontext;
 	struct ib_ucq_object           *obj;
@@ -336,8 +345,7 @@ err_event_file:
 	return ret;
 };
 
-static DECLARE_UVERBS_METHOD(
-	uverbs_method_cq_create, UVERBS_CQ_CREATE, uverbs_create_cq_handler,
+static DECLARE_COMMON_METHOD(UVERBS_CQ_CREATE,
 	&UVERBS_ATTR_IDR(CREATE_CQ_HANDLE, UVERBS_OBJECT_CQ, UVERBS_ACCESS_NEW,
 			 UA_FLAGS(UVERBS_ATTR_SPEC_F_MANDATORY)),
 	&UVERBS_ATTR_PTR_IN(CREATE_CQ_CQE, u32,
@@ -353,9 +361,9 @@ static DECLARE_UVERBS_METHOD(
 			     UA_FLAGS(UVERBS_ATTR_SPEC_F_MANDATORY)),
 	&uverbs_uhw_compat_in, &uverbs_uhw_compat_out);
 
-static int uverbs_destroy_cq_handler(struct ib_device *ib_dev,
-				     struct ib_uverbs_file *file,
-				     struct uverbs_attr_bundle *attrs)
+static int UVERBS_HANDLER(UVERBS_CQ_DESTROY)(struct ib_device *ib_dev,
+					     struct ib_uverbs_file *file,
+					     struct uverbs_attr_bundle *attrs)
 {
 	struct ib_uverbs_destroy_cq_resp resp;
 	struct ib_uobject *uobj =
@@ -377,78 +385,75 @@ static int uverbs_destroy_cq_handler(struct ib_device *ib_dev,
 	return uverbs_copy_to(attrs, DESTROY_CQ_RESP, &resp);
 }
 
-static DECLARE_UVERBS_METHOD(
-	uverbs_method_cq_destroy, UVERBS_CQ_DESTROY, uverbs_destroy_cq_handler,
+static DECLARE_COMMON_METHOD(UVERBS_CQ_DESTROY,
 	&UVERBS_ATTR_IDR(DESTROY_CQ_HANDLE, UVERBS_OBJECT_CQ,
 			 UVERBS_ACCESS_DESTROY,
 			 UA_FLAGS(UVERBS_ATTR_SPEC_F_MANDATORY)),
 	&UVERBS_ATTR_PTR_OUT(DESTROY_CQ_RESP, struct ib_uverbs_destroy_cq_resp,
 			     UA_FLAGS(UVERBS_ATTR_SPEC_F_MANDATORY)));
 
-DECLARE_UVERBS_OBJECT(uverbs_object_comp_channel,
-		      UVERBS_OBJECT_COMP_CHANNEL,
+DECLARE_COMMON_OBJECT(UVERBS_OBJECT_COMP_CHANNEL,
 		      &UVERBS_TYPE_ALLOC_FD(0,
 					      sizeof(struct ib_uverbs_completion_event_file),
 					      uverbs_hot_unplug_completion_event_file,
 					      &uverbs_event_fops,
 					      "[infinibandevent]", O_RDONLY));
 
-DECLARE_UVERBS_OBJECT(uverbs_object_cq, UVERBS_OBJECT_CQ,
+DECLARE_COMMON_OBJECT(UVERBS_OBJECT_CQ,
 		      &UVERBS_TYPE_ALLOC_IDR_SZ(sizeof(struct ib_ucq_object), 0,
 						  uverbs_free_cq),
-		      &uverbs_method_cq_create,
-		      &uverbs_method_cq_destroy);
+		      &UVERBS_METHOD(UVERBS_CQ_CREATE),
+		      &UVERBS_METHOD(UVERBS_CQ_DESTROY));
 
-DECLARE_UVERBS_OBJECT(uverbs_object_qp, UVERBS_OBJECT_QP,
+DECLARE_COMMON_OBJECT(UVERBS_OBJECT_QP,
 		      &UVERBS_TYPE_ALLOC_IDR_SZ(sizeof(struct ib_uqp_object), 0,
 						  uverbs_free_qp));
 
-DECLARE_UVERBS_OBJECT(uverbs_object_mw, UVERBS_OBJECT_MW,
+DECLARE_COMMON_OBJECT(UVERBS_OBJECT_MW,
 		      &UVERBS_TYPE_ALLOC_IDR(0, uverbs_free_mw));
 
-DECLARE_UVERBS_OBJECT(uverbs_object_mr, UVERBS_OBJECT_MR,
+DECLARE_COMMON_OBJECT(UVERBS_OBJECT_MR,
 		      /* 1 is used in order to free the MR after all the MWs */
 		      &UVERBS_TYPE_ALLOC_IDR(1, uverbs_free_mr));
 
-DECLARE_UVERBS_OBJECT(uverbs_object_srq, UVERBS_OBJECT_SRQ,
+DECLARE_COMMON_OBJECT(UVERBS_OBJECT_SRQ,
 		      &UVERBS_TYPE_ALLOC_IDR_SZ(sizeof(struct ib_usrq_object), 0,
 						  uverbs_free_srq));
 
-DECLARE_UVERBS_OBJECT(uverbs_object_ah, UVERBS_OBJECT_AH,
+DECLARE_COMMON_OBJECT(UVERBS_OBJECT_AH,
 		      &UVERBS_TYPE_ALLOC_IDR(0, uverbs_free_ah));
 
-DECLARE_UVERBS_OBJECT(uverbs_object_flow, UVERBS_OBJECT_FLOW,
+DECLARE_COMMON_OBJECT(UVERBS_OBJECT_FLOW,
 		      &UVERBS_TYPE_ALLOC_IDR(0, uverbs_free_flow));
 
-DECLARE_UVERBS_OBJECT(uverbs_object_wq, UVERBS_OBJECT_WQ,
+DECLARE_COMMON_OBJECT(UVERBS_OBJECT_WQ,
 		      &UVERBS_TYPE_ALLOC_IDR_SZ(sizeof(struct ib_uwq_object), 0,
 						  uverbs_free_wq));
 
-DECLARE_UVERBS_OBJECT(uverbs_object_rwq_ind_table,
-		      UVERBS_OBJECT_RWQ_IND_TBL,
+DECLARE_COMMON_OBJECT(UVERBS_OBJECT_RWQ_IND_TBL,
 		      &UVERBS_TYPE_ALLOC_IDR(0, uverbs_free_rwq_ind_tbl));
 
-DECLARE_UVERBS_OBJECT(uverbs_object_xrcd, UVERBS_OBJECT_XRCD,
+DECLARE_COMMON_OBJECT(UVERBS_OBJECT_XRCD,
 		      &UVERBS_TYPE_ALLOC_IDR_SZ(sizeof(struct ib_uxrcd_object), 0,
 						  uverbs_free_xrcd));
 
-DECLARE_UVERBS_OBJECT(uverbs_object_pd, UVERBS_OBJECT_PD,
+DECLARE_COMMON_OBJECT(UVERBS_OBJECT_PD,
 		      /* 2 is used in order to free the PD after MRs */
 		      &UVERBS_TYPE_ALLOC_IDR(2, uverbs_free_pd));
 
-DECLARE_UVERBS_OBJECT(uverbs_object_device, UVERBS_OBJECT_DEVICE, NULL);
+DECLARE_COMMON_OBJECT(UVERBS_OBJECT_DEVICE, NULL);
 
 DECLARE_UVERBS_OBJECT_TREE(uverbs_default_objects,
-			   &uverbs_object_device,
-			   &uverbs_object_pd,
-			   &uverbs_object_mr,
-			   &uverbs_object_comp_channel,
-			   &uverbs_object_cq,
-			   &uverbs_object_qp,
-			   &uverbs_object_ah,
-			   &uverbs_object_mw,
-			   &uverbs_object_srq,
-			   &uverbs_object_flow,
-			   &uverbs_object_wq,
-			   &uverbs_object_rwq_ind_table,
-			   &uverbs_object_xrcd);
+			   &UVERBS_OBJECT(UVERBS_OBJECT_DEVICE),
+			   &UVERBS_OBJECT(UVERBS_OBJECT_PD),
+			   &UVERBS_OBJECT(UVERBS_OBJECT_MR),
+			   &UVERBS_OBJECT(UVERBS_OBJECT_COMP_CHANNEL),
+			   &UVERBS_OBJECT(UVERBS_OBJECT_CQ),
+			   &UVERBS_OBJECT(UVERBS_OBJECT_QP),
+			   &UVERBS_OBJECT(UVERBS_OBJECT_AH),
+			   &UVERBS_OBJECT(UVERBS_OBJECT_MW),
+			   &UVERBS_OBJECT(UVERBS_OBJECT_SRQ),
+			   &UVERBS_OBJECT(UVERBS_OBJECT_FLOW),
+			   &UVERBS_OBJECT(UVERBS_OBJECT_WQ),
+			   &UVERBS_OBJECT(UVERBS_OBJECT_RWQ_IND_TBL),
+			   &UVERBS_OBJECT(UVERBS_OBJECT_XRCD));
