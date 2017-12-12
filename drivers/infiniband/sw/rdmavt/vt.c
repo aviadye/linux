@@ -831,6 +831,7 @@ int rvt_register_device(struct rvt_dev_info *rdi)
 	rdi->ibdev.node_type = RDMA_NODE_IB_CA;
 	rdi->ibdev.num_comp_vectors = 1;
 
+	rdi->ibdev.driver_id = RDMA_DRIVER_RDMAVT;
 	/* We are now good to announce we exist */
 	ret =  ib_register_device(&rdi->ibdev, rdi->driver_f.port_callback);
 	if (ret) {
