@@ -93,6 +93,7 @@ struct mlx5e_ipsec {
 	struct mlx5e_ipsec_sw_stats sw_stats;
 	struct mlx5e_ipsec_stats stats;
 	struct mlx5e_ipsec_esn_state esn_state;
+	struct workqueue_struct *wq;
 };
 
 void mlx5e_ipsec_build_inverse_table(void);

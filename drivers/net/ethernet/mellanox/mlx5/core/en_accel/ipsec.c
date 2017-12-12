@@ -51,6 +51,19 @@ struct mlx5e_ipsec_sa_entry {
 	void *hw_context;
 };
 
+static struct mlx5e_ipsec_sa_entry *to_ipsec_sa_entry(struct xfrm_state *x)
+{
+	struct mlx5e_ipsec_sa_entry *sa =
+		(struct mlx5e_ipsec_sa_entry *)x->xso.offload_handle;
+
+	if (!sa)
+		return NULL;
+
+	WARN_ON(sa->x != x);
+
+	return sa;
+}
+
 struct xfrm_state *mlx5e_ipsec_sadb_rx_lookup(struct mlx5e_ipsec *ipsec,
 					      unsigned int handle)
 {
@@ -227,24 +240,45 @@ static inline int mlx5e_xfrm_validate_state(struct xfrm_state *x)
 	return 0;
 }
 
+struct modify_wqe {
+	struct work_struct		work;
+	struct mlx5_accel_esp_xfrm_attrs attrs;
+	struct mlx5e_ipsec_sa_entry	*sa_entry;
+};
+
+static void _update_xfrm_state(struct work_struct *work)
+{
+	int ret;
+	struct modify_wqe *modify_wqe =
+		container_of(work, struct modify_wqe, work);
+	struct mlx5e_ipsec_sa_entry *sa_entry = modify_wqe->sa_entry;
+
+	ret = mlx5_accel_esp_modify_xfrm(sa_entry->xfrm,
+					 &modify_wqe->attrs);
+	if (ret)
+		netdev_warn(sa_entry->ipsec->en_priv->netdev,
+			    "Not an IPSec offload device\n");
+
+	kfree(modify_wqe);
+}
+
 static void mlx5e_xfrm_update_state(struct xfrm_state *x)
 {
-	struct mlx5e_ipsec_sa_entry *sa_entry = (void *)xfrm_dev_offload_handle(x);
-	struct mlx5_accel_ipsec_sa hw_sa;
-	void *context;
+	struct mlx5e_ipsec_sa_entry *sa_entry = to_ipsec_sa_entry(x);
+	struct modify_wqe *wqe;
 
 	if (!sa_entry)
 		return;
 
-	WARN_ON(sa_entry->x != x);
-
-	mlx5e_ipsec_build_hw_sa(MLX5_IPSEC_CMD_MOD_SA_V2, sa_entry, &hw_sa);
-	context = mlx5_accel_ipsec_sa_cmd_exec(sa_entry->ipsec->en_priv->mdev, &hw_sa,
-					       sizeof(hw_sa));
-	if (IS_ERR(context))
+	wqe = kzalloc(sizeof(*wqe), GFP_ATOMIC);
+	if (!wqe)
 		return;
 
-	sa_entry->context = context;
+	mlx5e_ipsec_build_accel_xfrm_attrs(sa_entry, &wqe->attrs);
+	wqe->sa_entry = sa_entry;
+
+	INIT_WORK(&wqe->work, _update_xfrm_state);
+	WARN_ON(!queue_work(sa_entry->ipsec->wq, &wqe->work));
 }
 
 static int mlx5e_xfrm_add_state(struct xfrm_state *x)
@@ -354,6 +388,7 @@ static void mlx5e_xfrm_free_state(struct xfrm_state *x)
 	sa_entry = (struct mlx5e_ipsec_sa_entry *)x->xso.offload_handle;
 	WARN_ON(sa_entry->x != x);
 
+	flush_workqueue(sa_entry->ipsec->wq);
 	mlx5_accel_esp_free_hw_context(sa_entry->hw_context);
 	mlx5_accel_esp_destroy_xfrm(sa_entry->xfrm);
 
@@ -383,6 +418,12 @@ int mlx5e_ipsec_init(struct mlx5e_priv *priv)
 	ipsec->en_priv->ipsec = ipsec;
 	ipsec->no_trailer = !!(mlx5_accel_ipsec_device_caps(priv->mdev) &
 			       MLX5_ACCEL_IPSEC_CAP_RX_NO_TRAILER);
+	ipsec->wq = alloc_ordered_workqueue("mlx5e_ipsec: %s", 0,
+					    priv->netdev->name);
+	if (!ipsec->wq) {
+		kfree(ipsec);
+		return -ENOMEM;
+	}
 	netdev_dbg(priv->netdev, "IPSec attached to netdevice\n");
 	return 0;
 }
