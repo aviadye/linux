@@ -206,6 +206,11 @@ struct mlx5_fpga_ipsec {
 
 static bool mlx5_fpga_is_ipsec_device(struct mlx5_core_dev *mdev)
 {
+	//dump_stack();
+	pr_err("HMR %s %d fpga=%d, vendor_id=%d, sbu_id=%d\n", __FUNCTION__, __LINE__,
+			MLX5_CAP_GEN(mdev, fpga),
+			MLX5_CAP_FPGA(mdev, ieee_vendor_id),
+			MLX5_CAP_FPGA(mdev, sandbox_product_id));
 	if (!mdev->fpga || !MLX5_CAP_GEN(mdev, fpga))
 		return false;
 
@@ -217,6 +222,7 @@ static bool mlx5_fpga_is_ipsec_device(struct mlx5_core_dev *mdev)
 	    MLX5_FPGA_CAP_SANDBOX_PRODUCT_ID_IPSEC)
 		return false;
 
+	pr_err("HMR %s %d\n", __FUNCTION__, __LINE__);
 	return true;
 }
 
@@ -410,13 +416,18 @@ u32 mlx5_fpga_ipsec_device_caps(struct mlx5_core_dev *mdev)
 	struct mlx5_fpga_device *fdev = mdev->fpga;
 	u32 ret = 0;
 
-	if (mlx5_fpga_is_ipsec_device(mdev))
+	pr_err("HMR %s %d\n", __FUNCTION__, __LINE__);
+	if (mlx5_fpga_is_ipsec_device(mdev)) {
+		pr_err("HMR %s %d\n", __FUNCTION__, __LINE__);
 		ret |= MLX5_ACCEL_IPSEC_CAP_DEVICE;
-	else
+	} else
 		return ret;
 
-	if (!fdev->ipsec)
+	pr_err("HMR %s %d\n", __FUNCTION__, __LINE__);
+	if (!fdev->ipsec) {
+		pr_err("HMR %s %d %d\n", __FUNCTION__, __LINE__, ret);
 		return ret;
+	}
 
 	if (MLX5_GET(ipsec_extended_cap, fdev->ipsec->caps, esp))
 		ret |= MLX5_ACCEL_IPSEC_CAP_ESP;
@@ -433,6 +444,7 @@ u32 mlx5_fpga_ipsec_device_caps(struct mlx5_core_dev *mdev)
 	if (MLX5_GET(ipsec_extended_cap, fdev->ipsec->caps, esn))
 		ret |= MLX5_ACCEL_IPSEC_CAP_ESN;
 
+	pr_err("HMR %s %d %d\n", __FUNCTION__, __LINE__, ret);
 	return ret;
 }
 

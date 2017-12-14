@@ -2737,7 +2737,10 @@ int mlx5_init_fs(struct mlx5_core_dev *dev)
 			goto err;
 	}
 
+	pr_err("HMR %s %d\n", __FUNCTION__, __LINE__);
+	pr_err("HMR %s %d %x\n", __FUNCTION__, __LINE__, mlx5_accel_ipsec_device_caps(steering->dev));
 	if (mlx5_accel_ipsec_device_caps(steering->dev) & MLX5_ACCEL_IPSEC_CAP_DEVICE) {
+		pr_err("HMR %s %d\n", __FUNCTION__, __LINE__);
 		err = init_egress_root_ns(steering);
 		if (err)
 			goto err;
@@ -2756,14 +2759,19 @@ int mlx5_fs_rule_notifier_register(struct mlx5_core_dev *dev,
 	struct mlx5_flow_namespace *ns;
 	int ret;
 
-	if (!IS_ENABLED(CONFIG_MLX5_CORE_FS_NOTIFIERS))
+	if (!IS_ENABLED(CONFIG_MLX5_CORE_FS_NOTIFIERS)) {
+		pr_err("HMR %s %d\n", __FUNCTION__, __LINE__);
 		return -EOPNOTSUPP;
+	}
 
 	ns = mlx5_get_flow_namespace(dev, type);
-	if (!ns)
+	if (!ns) {
+		pr_err("HMR %s %d\n", __FUNCTION__, __LINE__);
 		return -EINVAL;
+	}
 
 	ret = blocking_notifier_chain_register(&ns->rule_nh, nb);
+	pr_err("HMR %s %d\n", __FUNCTION__, __LINE__);
 	return ret;
 }
 
