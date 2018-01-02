@@ -3119,6 +3119,40 @@ static int mlx5_ib_modify_flow_action_esp(struct ib_flow_action *action,
 					  const struct ib_flow_action_attrs_esp *attr,
 					  struct uverbs_attr_bundle *attrs)
 {
+	struct mlx5_ib_flow_action *maction = to_mflow_act(action);
+	struct mlx5_accel_esp_xfrm_attrs accel_attrs;
+ 	int err = 0;
+
+	pr_info("mlx5_ib: in modify flow action\n");
+ 
+	if (attr->keymat || attr->replay || attr->encap ||
+	    attr->spi || attr->seq || attr->tfc_pad ||
+	    attr->hard_limit_pkts ||
+	    (attr->flags & ~(IB_FLOW_ACTION_ESP_FLAGS_ESN_TRIGGERED |
+			     IB_FLOW_ACTION_ESP_FLAGS_MOD_ESP_ATTRS |
+			     IB_UVERBS_FLOW_ACTION_ESP_FLAGS_ESN_NEW_WINDOW)))
+		return -EOPNOTSUPP;
+
+	if (!(maction->esp_aes_gcm.ib_flags & IB_FLOW_ACTION_ESP_FLAGS_ESN_TRIGGERED) &&
+	    attr->flags & (IB_FLOW_ACTION_ESP_FLAGS_ESN_TRIGGERED |
+			   IB_UVERBS_FLOW_ACTION_ESP_FLAGS_ESN_NEW_WINDOW))
+		return -EINVAL;
+
+	memcpy(&accel_attrs, &maction->esp_aes_gcm.ctx->attrs, sizeof(accel_attrs));
+	accel_attrs.esn = attr->esn;
+
+	if (attr->flags & IB_UVERBS_FLOW_ACTION_ESP_FLAGS_ESN_NEW_WINDOW)
+		accel_attrs.flags |= MLX5_ACCEL_ESP_FLAGS_ESN_STATE_OVERLAP;
+	else
+		accel_attrs.flags &= ~MLX5_ACCEL_ESP_FLAGS_ESN_STATE_OVERLAP;
+
+	err = mlx5_accel_esp_modify_xfrm(maction->esp_aes_gcm.ctx, &accel_attrs);
+	if (err)
+		return err;
+
+	maction->esp_aes_gcm.ib_flags &= ~IB_UVERBS_FLOW_ACTION_ESP_FLAGS_ESN_NEW_WINDOW;
+	maction->esp_aes_gcm.ib_flags |= attr->flags & IB_UVERBS_FLOW_ACTION_ESP_FLAGS_ESN_NEW_WINDOW;
+
 	return 0;
 }
 
