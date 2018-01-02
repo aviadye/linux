@@ -3141,8 +3141,8 @@ static int mlx5_ib_modify_flow_action_esp(struct ib_flow_action *action,
 		return -EINVAL;
 
 	memcpy(&accel_attrs, &maction->esp_aes_gcm.ctx->attrs, sizeof(accel_attrs));
-	accel_attrs.esn = attr->esn;
 
+	accel_attrs.esn = attr->esn;
 	if (attr->flags & IB_UVERBS_FLOW_ACTION_ESP_FLAGS_ESN_NEW_WINDOW)
 		accel_attrs.flags |= MLX5_ACCEL_ESP_FLAGS_ESN_STATE_OVERLAP;
 	else
