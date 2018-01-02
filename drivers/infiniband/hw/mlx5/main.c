@@ -3082,6 +3082,7 @@ static struct ib_flow_action *mlx5_ib_create_flow_action_esp(struct ib_device *d
 		goto err_parse;
 	}
 
+	action->esp_aes_gcm.ib_flags = attr->flags;
 	memcpy(&accel_attrs.keymat.aes_gcm.aes_key, &aes_gcm->aes_key,
 	       sizeof(accel_attrs.keymat.aes_gcm.aes_key));
 	accel_attrs.keymat.aes_gcm.key_len = aes_gcm->key_len;
@@ -3094,6 +3095,8 @@ static struct ib_flow_action *mlx5_ib_create_flow_action_esp(struct ib_device *d
 		accel_attrs.flags |= MLX5_ACCEL_ESP_FLAGS_ESN_TRIGGERED;
 	if (attr->flags & IB_UVERBS_FLOW_ACTION_ESP_FLAGS_ESN_NEW_WINDOW)
 		accel_attrs.flags |= MLX5_ACCEL_ESP_FLAGS_ESN_STATE_OVERLAP;
+	if (attr->flags & IB_UVERBS_FLOW_ACTION_ESP_FLAGS_ENCRYPT)
+		accel_attrs.action |= MLX5_ACCEL_ESP_ACTION_ENCRYPT;
 
 	action->esp_aes_gcm.ctx =
 		mlx5_accel_esp_create_xfrm(mdev->mdev, &accel_attrs, flags);
@@ -3102,6 +3105,8 @@ static struct ib_flow_action *mlx5_ib_create_flow_action_esp(struct ib_device *d
 
 	if (err)
 		goto err_parse;
+
+	action->esp_aes_gcm.ib_flags = attr->flags;
 
 	return &action->ib_action;
 
