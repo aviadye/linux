@@ -43,9 +43,12 @@
 
 static struct mlx5e_ipsec_sa_entry *to_ipsec_sa_entry(struct xfrm_state *x)
 {
-	struct mlx5e_ipsec_sa_entry *sa =
-		(struct mlx5e_ipsec_sa_entry *)x->xso.offload_handle;
+	struct mlx5e_ipsec_sa_entry *sa;
 
+	if (!x->xso.offload_handle)
+		return NULL;
+
+	sa = (struct mlx5e_ipsec_sa_entry *)x->xso.offload_handle;
 	if (!sa)
 		return NULL;
 
@@ -114,8 +117,39 @@ static void mlx5e_ipsec_sadb_rx_free(struct mlx5e_ipsec_sa_entry *sa_entry)
 	spin_unlock_irqrestore(&ipsec->sadb_rx_lock, flags);
 }
 
-static void mlx5e_ipsec_build_accel_xfrm_attrs(struct mlx5e_ipsec_sa_entry *sa_entry,
-					       struct mlx5_accel_esp_xfrm_attrs *attrs)
+static bool _update_esn_state(struct mlx5e_ipsec_sa_entry *sa_entry)
+{
+	struct xfrm_replay_state_esn *replay_esn;
+	u32 seq_bottom;
+	u8 overlap;
+	u32 *esn;
+
+	if (!(sa_entry->x->props.flags & XFRM_STATE_ESN)) {
+		sa_entry->esn_state.trigger = 0;
+		return false;
+	}
+
+	replay_esn = sa_entry->x->replay_esn;
+	seq_bottom = replay_esn->seq - replay_esn->replay_window + 1;
+	overlap = sa_entry->esn_state.overlap;
+	esn = &sa_entry->esn_state.esn;
+
+	sa_entry->esn_state.trigger = 1;
+	if (unlikely(overlap && (seq_bottom < MLX5E_ESN_SCOPE_MID))) {
+		++(*esn);
+		sa_entry->esn_state.overlap = 0;
+		return true;
+	} else if (unlikely(!overlap &&
+			    (seq_bottom >= MLX5E_ESN_SCOPE_MID))) {
+		sa_entry->esn_state.overlap = 1;
+		return true;
+	}
+
+	return false;
+}
+
+void mlx5e_ipsec_build_accel_xfrm_attrs(struct mlx5e_ipsec_sa_entry *sa_entry,
+					struct mlx5_accel_esp_xfrm_attrs *attrs)
 {
 	struct xfrm_state *x = sa_entry->x;
 	struct aes_gcm_keymat *aes_gcm = &attrs->keymat.aes_gcm;
@@ -147,6 +181,14 @@ static void mlx5e_ipsec_build_accel_xfrm_attrs(struct mlx5e_ipsec_sa_entry *sa_e
 	aes_gcm->icv_len = x->aead->alg_icv_len;
 	pr_err("HMR %s %d aes_gcm_icv_len=%d\n", __FUNCTION__, __LINE__,
 			aes_gcm->icv_len);
+
+	/* esn */
+	if (sa_entry->esn_state.trigger) {
+		attrs->flags |= MLX5_ACCEL_ESP_FLAGS_ESN_TRIGGERED;
+		attrs->esn = sa_entry->esn_state.esn;
+		if (sa_entry->esn_state.overlap)
+			attrs->flags |= MLX5_ACCEL_ESP_FLAGS_ESN_STATE_OVERLAP;
+	}
 
 	/* rx handle */
 	attrs->sa_handle = sa_entry->handle;
@@ -283,6 +325,9 @@ static int mlx5e_xfrm_add_state(struct xfrm_state *x)
 				mlx5e_ipsec_set_iv_esn : mlx5e_ipsec_set_iv;
 	}
 
+	/* check esn */
+	_update_esn_state(sa_entry);
+
 	/* create xfrm */
 	mlx5e_ipsec_build_accel_xfrm_attrs(sa_entry, &attrs);
 	sa_entry->xfrm =
@@ -333,14 +378,12 @@ out:
 
 static void mlx5e_xfrm_del_state(struct xfrm_state *x)
 {
-	struct mlx5e_ipsec_sa_entry *sa_entry;
+	struct mlx5e_ipsec_sa_entry *sa_entry = to_ipsec_sa_entry(x);
 
 	pr_err("HMR %s %d DEL_STATE\n", __FUNCTION__, __LINE__);
-	if (!x->xso.offload_handle)
-		return;
 
-	sa_entry = (struct mlx5e_ipsec_sa_entry *)x->xso.offload_handle;
-	WARN_ON(sa_entry->x != x);
+	if (!sa_entry)
+		return;
 
 	if (x->xso.flags & XFRM_OFFLOAD_INBOUND)
 		mlx5e_ipsec_sadb_rx_del(sa_entry);
@@ -348,14 +391,12 @@ static void mlx5e_xfrm_del_state(struct xfrm_state *x)
 
 static void mlx5e_xfrm_free_state(struct xfrm_state *x)
 {
-	struct mlx5e_ipsec_sa_entry *sa_entry;
+	struct mlx5e_ipsec_sa_entry *sa_entry = to_ipsec_sa_entry(x);
 
 	pr_err("HMR %s %d FREE_STATE\n", __FUNCTION__, __LINE__);
-	if (!x->xso.offload_handle)
-		return;
 
-	sa_entry = (struct mlx5e_ipsec_sa_entry *)x->xso.offload_handle;
-	WARN_ON(sa_entry->x != x);
+	if (!sa_entry)
+		return;
 
 	if (sa_entry->hw_context) {
 		flush_workqueue(sa_entry->ipsec->wq);
@@ -455,27 +496,13 @@ static void mlx5e_xfrm_advance_esn_state(struct xfrm_state *x)
 {
 	struct mlx5e_ipsec_sa_entry *sa_entry = to_ipsec_sa_entry(x);
 	struct mlx5e_ipsec_modify_state_work *modify_work;
-	struct xfrm_replay_state_esn *replay_esn = x->replay_esn;
-	struct net_device *netdev = x->xso.dev;
-	struct mlx5e_priv *priv = netdev_priv(netdev);
-	u32 seq_bottom;
-	u8 overlap;
-	u32 *esn;
+	bool need_update;
 
 	if (!sa_entry)
 		return;
 
-	seq_bottom = replay_esn->seq - replay_esn->replay_window + 1;
-	overlap = priv->ipsec->esn_state.overlap;
-	esn = &priv->ipsec->esn_state.esn;
-
-	if (unlikely(overlap && (seq_bottom < MLX5E_ESN_SCOPE_MID))) {
-		++(*esn);
-		priv->ipsec->esn_state.overlap = 0;
-	} else if (unlikely(!overlap &&
-			    (seq_bottom >= MLX5E_ESN_SCOPE_MID)))
-		priv->ipsec->esn_state.overlap = 1;
-	else
+	need_update = _update_esn_state(sa_entry);
+	if (!need_update)
 		return;
 
 	modify_work = kzalloc(sizeof(*modify_work), GFP_ATOMIC);

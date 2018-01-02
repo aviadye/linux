@@ -80,9 +80,8 @@ struct mlx5e_ipsec_stats {
 #define MLX5E_ESN_SCOPE_MID 0x80000000L
 
 struct mlx5e_ipsec_esn_state {
-	bool scope_mid_cmd;
-	bool scope_start_cmd;
 	u32 esn;
+	u8 trigger: 1;
 	u8 overlap: 1;
 };
 
@@ -94,12 +93,12 @@ struct mlx5e_ipsec {
 	struct ida halloc;
 	struct mlx5e_ipsec_sw_stats sw_stats;
 	struct mlx5e_ipsec_stats stats;
-	struct mlx5e_ipsec_esn_state esn_state;
 	struct workqueue_struct *wq;
 };
 
 struct mlx5e_ipsec_sa_entry {
 	struct hlist_node hlist; /* Item in SADB_RX hashtable */
+	struct mlx5e_ipsec_esn_state esn_state;
 	unsigned int handle; /* Handle in SADB_RX */
 	struct xfrm_state *x;
 	struct mlx5e_ipsec *ipsec;
