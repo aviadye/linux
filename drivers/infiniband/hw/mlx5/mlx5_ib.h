@@ -795,7 +795,7 @@ struct mlx5_ib_flow_action {
 	struct ib_flow_action		ib_action;
 	union {
 		struct {
-			struct mlx5_accel_ipsec_xfrm_ctx *ctx;
+			struct mlx5_accel_esp_xfrm *ctx;
 		} esp_aes_gcm;
 	};
 };

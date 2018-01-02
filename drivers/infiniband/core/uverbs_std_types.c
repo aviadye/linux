@@ -665,9 +665,7 @@ static int UVERBS_HANDLER(UVERBS_FLOW_ACTION_ESP_CREATE)(struct ib_device *ib_de
 		return ret;
 
 	uobj = uverbs_attr_get(attrs, FLOW_ACTION_ESP_HANDLE)->obj_attr.uobject;
-	action = ib_dev->create_flow_action_esp(ib_dev, IB_FLOW_ACTION_ESP,
-						&esp_attr.hdr,
-						attrs);
+	action = ib_dev->create_flow_action_esp(ib_dev, &esp_attr.hdr, attrs);
 	if (IS_ERR(action))
 		return PTR_ERR(action);
 

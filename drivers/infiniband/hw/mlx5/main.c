@@ -3031,13 +3031,16 @@ static u32 mlx5_ib_flow_action_flags_to_accel_xfrm_flags(u32 mlx5_flags)
 }
 
 static struct ib_flow_action *mlx5_ib_create_flow_action_esp(struct ib_device *device,
-							     enum ib_flow_action_type type,
 							     const struct ib_flow_action_attrs_esp *attr,
 							     struct uverbs_attr_bundle *attrs)
 {
 	struct mlx5_ib_dev *mdev = to_mdev(device);
+	struct ib_flow_action_attrs_esp_keymat_aes_gcm *ib_aes_gcm;
+	struct ib_uverbs_flow_action_esp_keymat_aes_gcm *aes_gcm;
+	struct mlx5_accel_esp_xfrm_attrs accel_attrs;
 	struct mlx5_ib_flow_action *action;
 	u64 action_flags;
+	u64 flags;
 	int err;
 
 	err = uverbs_copy_from(&action_flags, attrs, MLX5_IB_CREATE_FLOW_ACTION_FLAGS);
@@ -3049,63 +3052,53 @@ static struct ib_flow_action *mlx5_ib_create_flow_action_esp(struct ib_device *d
 		return ERR_PTR(-EOPNOTSUPP);
 
 	action = kmalloc(sizeof(*action), GFP_KERNEL);
-
 	if (!action)
 		return ERR_PTR(-ENOMEM);
 
-	switch (type) {
-	case IB_FLOW_ACTION_ESP: {
-		u64 flags =
-			mlx5_ib_flow_action_flags_to_accel_xfrm_flags(action_flags);
-		struct ib_flow_action_attrs_esp_keymat_aes_gcm *ib_aes_gcm;
-		struct ib_uverbs_flow_action_esp_keymat_aes_gcm *aes_gcm;
-		struct mlx5_accel_xfrm_ipsec_attrs accel_attrs;
+	flags = mlx5_ib_flow_action_flags_to_accel_xfrm_flags(action_flags);
 
-		if (!attr->keymat || attr->replay || attr->encap ||
-		    attr->spi || attr->seq || attr->tfc_pad ||
-		    attr->hard_limit_pkts ||
-		    (attr->flags & ~(IB_FLOW_ACTION_ESP_FLAGS_ESN_TRIGGERED |
-				     IB_UVERBS_FLOW_ACTION_ESP_FLAGS_ENCRYPT))) {
-			err = -EOPNOTSUPP;
-			goto err_parse;
-		}
-
-		if (attr->keymat->protocol != FLOW_ACTION_ESP_KEYMAT_AES_GCM) {
-			err = -EOPNOTSUPP;
-			goto err_parse;
-		}
-
-		ib_aes_gcm = container_of(attr->keymat,
-					  struct ib_flow_action_attrs_esp_keymat_aes_gcm,
-					  keymat);
-		aes_gcm = &ib_aes_gcm->attrs;
-
-		if (aes_gcm->icv_len != 16 ||
-		    aes_gcm->iv_algo != IB_UVERBS_FLOW_ACTION_IV_ALGO_SEQ) {
-			err = -EOPNOTSUPP;
-			goto err_parse;
-		}
-
-		accel_attrs.esn = attr->esn;
-		memcpy(&accel_attrs.key, &aes_gcm->aes_key,
-		       sizeof(accel_attrs.key));
-		accel_attrs.key_length = aes_gcm->key_len;
-		memcpy(&accel_attrs.salt, &aes_gcm->salt,
-		       sizeof(accel_attrs.salt));
-		memcpy(&accel_attrs.seqiv, &aes_gcm->iv,
-		       sizeof(accel_attrs.seqiv));
-		accel_attrs.is_esn =
-			!!(attr->flags & IB_FLOW_ACTION_ESP_FLAGS_ESN_TRIGGERED);
-		action->esp_aes_gcm.ctx =
-			mlx5_accel_ipsec_create_xfrm_ctx(mdev->mdev,
-							 &accel_attrs, flags);
-		if (IS_ERR(action->esp_aes_gcm.ctx))
-			err = PTR_ERR(action->esp_aes_gcm.ctx);
-		break;
-		}
-	default:
+	if (!attr->keymat || attr->replay || attr->encap ||
+	    attr->spi || attr->seq || attr->tfc_pad ||
+	    attr->hard_limit_pkts ||
+	    (attr->flags & ~(IB_FLOW_ACTION_ESP_FLAGS_ESN_TRIGGERED |
+			     IB_UVERBS_FLOW_ACTION_ESP_FLAGS_ENCRYPT))) {
 		err = -EOPNOTSUPP;
-	};
+		goto err_parse;
+	}
+
+	if (attr->keymat->protocol != FLOW_ACTION_ESP_KEYMAT_AES_GCM) {
+		err = -EOPNOTSUPP;
+		goto err_parse;
+	}
+
+	ib_aes_gcm = container_of(attr->keymat,
+				  struct ib_flow_action_attrs_esp_keymat_aes_gcm,
+				  keymat);
+	aes_gcm = &ib_aes_gcm->attrs;
+
+	if (aes_gcm->icv_len != 16 ||
+	    aes_gcm->iv_algo != IB_UVERBS_FLOW_ACTION_IV_ALGO_SEQ) {
+		err = -EOPNOTSUPP;
+		goto err_parse;
+	}
+
+	memcpy(&accel_attrs.keymat.aes_gcm.aes_key, &aes_gcm->aes_key,
+	       sizeof(accel_attrs.keymat.aes_gcm.aes_key));
+	accel_attrs.keymat.aes_gcm.key_len = aes_gcm->key_len;
+	memcpy(&accel_attrs.keymat.aes_gcm.salt, &aes_gcm->salt,
+	       sizeof(accel_attrs.keymat.aes_gcm.salt));
+	memcpy(&accel_attrs.keymat.aes_gcm.seq_iv, &aes_gcm->iv,
+	       sizeof(accel_attrs.keymat.aes_gcm.seq_iv));
+	accel_attrs.esn = attr->esn;
+	if (attr->flags & IB_FLOW_ACTION_ESP_FLAGS_ESN_TRIGGERED)
+		accel_attrs.flags |= MLX5_ACCEL_ESP_FLAGS_ESN_TRIGGERED;
+	if (attr->flags & IB_UVERBS_FLOW_ACTION_ESP_FLAGS_ESN_NEW_WINDOW)
+		accel_attrs.flags |= MLX5_ACCEL_ESP_FLAGS_ESN_STATE_OVERLAP;
+
+	action->esp_aes_gcm.ctx =
+		mlx5_accel_esp_create_xfrm(mdev->mdev, &accel_attrs, flags);
+	if (IS_ERR(action->esp_aes_gcm.ctx))
+		err = PTR_ERR(action->esp_aes_gcm.ctx);
 
 	if (err)
 		goto err_parse;
@@ -3121,13 +3114,7 @@ static int mlx5_ib_modify_flow_action_esp(struct ib_flow_action *action,
 					  const struct ib_flow_action_attrs_esp *attr,
 					  struct uverbs_attr_bundle *attrs)
 {
-	struct mlx5_ib_dev *dev = to_mdev(action->device);
-	int err = 0;
-
-	pr_info("mlx5_ib: in modify flow action\n");
-	/* TODO: Do something userful here */
-
-	return err;
+	return 0;
 }
 
 static int mlx5_ib_destroy_flow_action(struct ib_flow_action *action)
@@ -3140,7 +3127,7 @@ static int mlx5_ib_destroy_flow_action(struct ib_flow_action *action)
 		 * We only support aes_gcm by now, so we implicitly know this is
 		 * the underline crypto.
 		 */
-		mlx5_accel_ipsec_destroy_xfrm_ctx(maction->esp_aes_gcm.ctx);
+		mlx5_accel_esp_destroy_xfrm(maction->esp_aes_gcm.ctx);
 		break;
 	default:
 		WARN_ON(true);

@@ -2404,7 +2404,6 @@ struct ib_device {
 							   struct ib_udata *udata);
 	int                        (*destroy_rwq_ind_table)(struct ib_rwq_ind_table *wq_ind_table);
 	struct ib_flow_action *	   (*create_flow_action_esp)(struct ib_device *device,
-							     enum ib_flow_action_type type,
 							     const struct ib_flow_action_attrs_esp *attr,
 							     struct uverbs_attr_bundle *attrs);
 	int			   (*destroy_flow_action)(struct ib_flow_action *action);
