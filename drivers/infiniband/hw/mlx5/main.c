@@ -2257,7 +2257,7 @@ static int parse_flow_flow_action(const union ib_flow_spec *ib_spec,
 	switch (maction->ib_action.type) {
 	case IB_FLOW_ACTION_ESP:
 		/* Currently only AES_GCM keymat is supported by the driver */
-		action->esp_aes_gcm_id = (uintptr_t)maction->esp_aes_gcm.ctx;
+		action->esp_id = (uintptr_t)maction->esp_aes_gcm.ctx;
 		action->action |= flow_attr->flags & IB_FLOW_ATTR_FLAGS_EGRESS ?
 			MLX5_FLOW_CONTEXT_ACTION_ENCRYPT :
 			MLX5_FLOW_CONTEXT_ACTION_DECRYPT;
