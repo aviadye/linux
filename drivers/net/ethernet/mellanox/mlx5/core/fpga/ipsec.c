@@ -1327,12 +1327,6 @@ void mlx5_fpga_ipsec_cleanup(struct mlx5_core_dev *mdev)
 int mlx5_fpga_esp_validate_xfrm_attrs(struct mlx5_core_dev *mdev,
 				      const struct mlx5_accel_esp_xfrm_attrs *attrs)
 {
-	if ((attrs->flags != MLX5_ACCEL_ESP_FLAGS_TUNNEL) &&
-	    (attrs->flags != MLX5_ACCEL_ESP_FLAGS_TUNNEL)) {
-		mlx5_core_err(mdev, "Only transport and tunnel xfrm states may be offloaded\n");
-		return -EOPNOTSUPP;
-	}
-
 	if (attrs->tfc_pad) {
 		mlx5_core_err(mdev, "Cannot offload xfrm states with tfc padding\n");
 		return -EOPNOTSUPP;

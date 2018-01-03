@@ -1905,11 +1905,10 @@ search_again_locked:
 
 	rule = try_add_to_existing_fg(ft, &match_head.list, spec, flow_act, dest,
 				      dest_num, version);
-	rule->id = id;
 	free_match_list(&match_head);
 	if (!IS_ERR(rule) ||
 	    (PTR_ERR(rule) != -ENOENT && PTR_ERR(rule) != -EAGAIN))
-		return rule;
+		goto return_rule;
 
 	if (!take_write) {
 		nested_down_write_ref_node(&ft->node, FS_LOCK_GRANDPARENT);
@@ -1956,7 +1955,9 @@ search_again_locked:
 	call_notifiers_chain(&notifier_attrs, &ft->node,
 			     MLX5_FS_RULE_NOTIFY_ADD_POST, true,
 			     CALL_NOTIFIERS_CHAIN_CONTINUE_ON_ERR);
-
+return_rule:
+	if (!IS_ERR(rule))
+		rule->id = id;
 	return rule;
 
 err_release_fg:
