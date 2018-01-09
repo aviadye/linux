@@ -21,6 +21,7 @@
 #include <net/dst.h>
 #include <net/xfrm.h>
 #include <linux/notifier.h>
+#include <linux/percpu.h>
 
 #ifdef CONFIG_XFRM_OFFLOAD
 int validate_xmit_xfrm(struct sk_buff *skb, netdev_features_t features)
@@ -102,6 +103,7 @@ int xfrm_dev_state_add(struct net *net, struct xfrm_state *x,
 
 	err = dev->xfrmdev_ops->xdo_dev_state_add(x);
 	if (err) {
+		xso->dev = NULL;
 		dev_put(dev);
 		return err;
 	}
