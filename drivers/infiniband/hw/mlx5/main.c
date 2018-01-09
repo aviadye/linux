@@ -3220,11 +3220,8 @@ static struct ib_flow_action *mlx5_ib_create_flow_action_esp(struct ib_device *d
 	if (attr->flags & IB_UVERBS_FLOW_ACTION_ESP_FLAGS_ENCRYPT)
 		accel_attrs.action |= MLX5_ACCEL_ESP_ACTION_ENCRYPT;
 
-	pr_err("HMR got from user %llx to_mlx5 %x\n", attr->flags, accel_attrs.flags);
-
 	action->esp_aes_gcm.ctx =
 		mlx5_accel_esp_create_xfrm(mdev->mdev, &accel_attrs, flags);
-	pr_err("HMR %s-%d, action->esp_aes_gcm.ctx=0x%p\n", __FUNCTION__, __LINE__, action->esp_aes_gcm.ctx);
 	if (IS_ERR(action->esp_aes_gcm.ctx))
 		err = PTR_ERR(action->esp_aes_gcm.ctx);
 
@@ -3233,7 +3230,6 @@ static struct ib_flow_action *mlx5_ib_create_flow_action_esp(struct ib_device *d
 
 	action->esp_aes_gcm.ib_flags = attr->flags;
 
-	pr_err("HMR %s-%d, return=0x%p\n", __FUNCTION__, __LINE__, &action->ib_action);
 	return &action->ib_action;
 
 err_parse:

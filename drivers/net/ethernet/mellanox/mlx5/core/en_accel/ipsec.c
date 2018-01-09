@@ -166,8 +166,6 @@ void mlx5e_ipsec_build_accel_xfrm_attrs(struct mlx5e_ipsec_sa_entry *sa_entry,
 
 	memcpy(aes_gcm->aes_key, x->aead->alg_key, key_len);
 	aes_gcm->key_len = key_len * 8;
-	pr_err("HMR %s %d alg_key_len=%d crypto_data_len=%d key_len=%d aes_gcm_key_len=%d\n", __FUNCTION__, __LINE__,
-			x->aead->alg_key_len, crypto_data_len, key_len, aes_gcm->key_len);
 
 	/* salt and seq_iv */
 	aead = x->data;
@@ -179,8 +177,6 @@ void mlx5e_ipsec_build_accel_xfrm_attrs(struct mlx5e_ipsec_sa_entry *sa_entry,
 
 	/* iv len */
 	aes_gcm->icv_len = x->aead->alg_icv_len;
-	pr_err("HMR %s %d aes_gcm_icv_len=%d\n", __FUNCTION__, __LINE__,
-			aes_gcm->icv_len);
 
 	/* esn */
 	if (sa_entry->esn_state.trigger) {
@@ -250,7 +246,6 @@ static inline int mlx5e_xfrm_validate_state(struct xfrm_state *x)
 		netdev_info(netdev, "Cannot offload xfrm states without aead\n");
 		return -EINVAL;
 	}
-	pr_err("HMR %s %d alg_icv_len=%d\n", __FUNCTION__, __LINE__, x->aead->alg_icv_len);
 	if (x->aead->alg_icv_len != 128) {
 		netdev_info(netdev, "Cannot offload xfrm states with AEAD ICV length other than 128bit\n");
 		return -EINVAL;
@@ -291,16 +286,11 @@ static int mlx5e_xfrm_add_state(struct xfrm_state *x)
 	bool is_ipv6 = false;
 	int err;
 
-	pr_err("HMR %s %d ADD_STATE\n", __FUNCTION__, __LINE__);
-	pr_err("HMR %s %d refcount=%d\n", __FUNCTION__, __LINE__, this_cpu_read(*netdev->pcpu_refcnt));
-
 	priv = netdev_priv(netdev);
 
 	err = mlx5e_xfrm_validate_state(x);
-	if (err) {
-		pr_err("HMR %s %d ADD_STATE\n", __FUNCTION__, __LINE__);
+	if (err)
 		return err;
-	}
 
 	sa_entry = kzalloc(sizeof(*sa_entry), GFP_KERNEL);
 	if (!sa_entry) {
@@ -335,7 +325,6 @@ static int mlx5e_xfrm_add_state(struct xfrm_state *x)
 						   MLX5_ACCEL_XFRM_FLAG_REQUIRE_METADATA);
 	if (IS_ERR(sa_entry->xfrm)) {
 		err = PTR_ERR(sa_entry->xfrm);
-		pr_err("HMR %s %d refcount=%d\n", __FUNCTION__, __LINE__, this_cpu_read(*netdev->pcpu_refcnt));
 		goto err_sadb_rx;
 	}
 
@@ -380,8 +369,6 @@ static void mlx5e_xfrm_del_state(struct xfrm_state *x)
 {
 	struct mlx5e_ipsec_sa_entry *sa_entry = to_ipsec_sa_entry(x);
 
-	pr_err("HMR %s %d DEL_STATE\n", __FUNCTION__, __LINE__);
-
 	if (!sa_entry)
 		return;
 
@@ -392,8 +379,6 @@ static void mlx5e_xfrm_del_state(struct xfrm_state *x)
 static void mlx5e_xfrm_free_state(struct xfrm_state *x)
 {
 	struct mlx5e_ipsec_sa_entry *sa_entry = to_ipsec_sa_entry(x);
-
-	pr_err("HMR %s %d FREE_STATE\n", __FUNCTION__, __LINE__);
 
 	if (!sa_entry)
 		return;

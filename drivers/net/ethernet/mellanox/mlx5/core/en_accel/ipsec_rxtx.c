@@ -310,8 +310,6 @@ mlx5e_ipsec_build_sp(struct net_device *netdev, struct sk_buff *skb,
 	}
 
 	sa_handle = be32_to_cpu(mdata->content.rx.sa_handle);
-	pr_err("HMR %s %d RX sa_handle=%d\n", __FUNCTION__, __LINE__,
-			sa_handle);
 	xs = mlx5e_ipsec_sadb_rx_lookup(priv->ipsec, sa_handle);
 	if (unlikely(!xs)) {
 		atomic64_inc(&priv->ipsec->sw_stats.ipsec_rx_drop_sadb_miss);

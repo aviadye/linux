@@ -207,11 +207,6 @@ struct mlx5_fpga_ipsec {
 
 static bool mlx5_fpga_is_ipsec_device(struct mlx5_core_dev *mdev)
 {
-	//dump_stack();
-	//pr_err("HMR %s %d fpga=%d, vendor_id=%d, sbu_id=%d\n", __FUNCTION__, __LINE__,
-	//		MLX5_CAP_GEN(mdev, fpga),
-	//		MLX5_CAP_FPGA(mdev, ieee_vendor_id),
-	//		MLX5_CAP_FPGA(mdev, sandbox_product_id));
 	if (!mdev->fpga || !MLX5_CAP_GEN(mdev, fpga))
 		return false;
 
@@ -586,8 +581,6 @@ static void mlx5_fpga_ipsec_build_hw_xfrm(struct mlx5_core_dev *mdev,
 
 	/* rx handle */
 	hw_sa->ipsec_sa_v1.sw_sa_handle = htonl(xfrm_attrs->sa_handle);
-	pr_err("HMR %s %d sa_handle=%d\n", __FUNCTION__, __LINE__,
-			hw_sa->ipsec_sa_v1.sw_sa_handle);
 
 	/* enc mode */
 	switch (aes_gcm->key_len) {
@@ -935,9 +928,7 @@ void mlx5_fpga_ipsec_delete_sa_ctx(void *context)
 			((struct mlx5_fpga_ipsec_sa_ctx *)context)->fpga_xfrm;
 
 	mutex_lock(&fpga_xfrm->lock);
-	pr_err("HMR %s %d num_rules=%d\n", __FUNCTION__, __LINE__, fpga_xfrm->num_rules);
 	if (!--fpga_xfrm->num_rules) {
-		pr_err("HMR %s %d\n", __FUNCTION__, __LINE__);
 		mlx5_fpga_ipsec_release_sa_ctx(fpga_xfrm->sa_ctx);
 		fpga_xfrm->sa_ctx = NULL;
 	}
