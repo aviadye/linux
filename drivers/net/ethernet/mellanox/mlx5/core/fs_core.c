@@ -1879,6 +1879,8 @@ _mlx5_add_flow_rules(struct mlx5_flow_table *ft,
 		err = id;
 		goto err_id;
 	}
+	pr_err("HMR2 %s %d ALLOC_ID:%p-%d\n", __FUNCTION__, __LINE__,
+			ft, id);
 
 	fill_notifier_data(&notifier_attrs, &ft->node, id,
 			   &spec->match_criteria_enable,
@@ -1903,6 +1905,7 @@ search_again_locked:
 
 	rule = try_add_to_existing_fg(ft, &match_head.list, spec, flow_act, dest,
 				      dest_num, version);
+	rule->id = id;
 	free_match_list(&match_head);
 	if (!IS_ERR(rule) ||
 	    (PTR_ERR(rule) != -ENOENT && PTR_ERR(rule) != -EAGAIN))
@@ -1953,7 +1956,7 @@ search_again_locked:
 	call_notifiers_chain(&notifier_attrs, &ft->node,
 			     MLX5_FS_RULE_NOTIFY_ADD_POST, true,
 			     CALL_NOTIFIERS_CHAIN_CONTINUE_ON_ERR);
-	rule->id = id;
+
 	return rule;
 
 err_release_fg:
@@ -2049,6 +2052,8 @@ void mlx5_del_flow_rules(struct mlx5_flow_handle *handle)
 	for (i = handle->num_rules - 1; i >= 0; i--)
 		tree_remove_node(&handle->rule[i]->node);
 
+	pr_err("HMR2 %s %d FREE_ID:%p-%d\n", __FUNCTION__, __LINE__,
+			ft, handle->id);
 	notifier_remove_id(ft, handle->id);
 free:
 	kfree(handle);

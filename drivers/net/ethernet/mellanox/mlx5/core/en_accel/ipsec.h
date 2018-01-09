@@ -40,6 +40,8 @@
 #include <net/xfrm.h>
 #include <linux/idr.h>
 
+#include "accel/ipsec.h"
+
 #define MLX5E_IPSEC_SADB_RX_BITS 10
 #define MLX5E_METADATA_ETHER_TYPE (0x8CE4)
 #define MLX5E_METADATA_ETHER_LEN 8
@@ -94,6 +96,17 @@ struct mlx5e_ipsec {
 	struct mlx5e_ipsec_stats stats;
 	struct mlx5e_ipsec_esn_state esn_state;
 	struct workqueue_struct *wq;
+};
+
+struct mlx5e_ipsec_sa_entry {
+	struct hlist_node hlist; /* Item in SADB_RX hashtable */
+	unsigned int handle; /* Handle in SADB_RX */
+	struct xfrm_state *x;
+	struct mlx5e_ipsec *ipsec;
+	struct mlx5_accel_esp_xfrm *xfrm;
+	void *hw_context;
+	void (*set_iv_op)(struct sk_buff *skb, struct xfrm_state *x,
+			  struct xfrm_offload *xo);
 };
 
 void mlx5e_ipsec_build_inverse_table(void);

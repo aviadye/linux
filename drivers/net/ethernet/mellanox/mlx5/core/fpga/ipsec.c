@@ -110,11 +110,12 @@ struct mlx5_fpga_ipsec_sa_v1 {
 
 struct mlx5_fpga_ipsec_sa {
 	struct mlx5_fpga_ipsec_sa_v1 ipsec_sa_v1;
-	__be32 udp_sp;
-	__be32 udp_dp;
+	__be16 udp_sp;
+	__be16 udp_dp;
+	u8 reserved1[4];
 	__be32 esn;
-	__be32 vid:12;
-	__be32 reserved3:20;
+	__be16 vid;	/* only 12 bits, rest is reserved */
+	__be16 reserved2;
 } __packed;
 
 struct mlx5_fpga_ipsec_cap {
@@ -207,10 +208,10 @@ struct mlx5_fpga_ipsec {
 static bool mlx5_fpga_is_ipsec_device(struct mlx5_core_dev *mdev)
 {
 	//dump_stack();
-	pr_err("HMR %s %d fpga=%d, vendor_id=%d, sbu_id=%d\n", __FUNCTION__, __LINE__,
-			MLX5_CAP_GEN(mdev, fpga),
-			MLX5_CAP_FPGA(mdev, ieee_vendor_id),
-			MLX5_CAP_FPGA(mdev, sandbox_product_id));
+	//pr_err("HMR %s %d fpga=%d, vendor_id=%d, sbu_id=%d\n", __FUNCTION__, __LINE__,
+	//		MLX5_CAP_GEN(mdev, fpga),
+	//		MLX5_CAP_FPGA(mdev, ieee_vendor_id),
+	//		MLX5_CAP_FPGA(mdev, sandbox_product_id));
 	if (!mdev->fpga || !MLX5_CAP_GEN(mdev, fpga))
 		return false;
 
@@ -222,7 +223,6 @@ static bool mlx5_fpga_is_ipsec_device(struct mlx5_core_dev *mdev)
 	    MLX5_FPGA_CAP_SANDBOX_PRODUCT_ID_IPSEC)
 		return false;
 
-	pr_err("HMR %s %d\n", __FUNCTION__, __LINE__);
 	return true;
 }
 
@@ -389,14 +389,21 @@ static int mlx5_fpga_ipsec_update_hw_sa(struct mlx5_fpga_device *fdev,
 	else
 		sa_cmd_size = sizeof(hw_sa->ipsec_sa_v1);
 
+	pr_err("HMR %s %d FPGA_CMD\n", __FUNCTION__, __LINE__);
+	print_hex_dump(KERN_INFO, "fpga_cmd: ", DUMP_PREFIX_OFFSET, 32, 4,
+		       hw_sa, sa_cmd_size, false);
 	cmd_context = (struct mlx5_fpga_ipsec_cmd_context *)
 			mlx5_fpga_ipsec_cmd_exec(dev, hw_sa, sa_cmd_size);
+	pr_err("HMR %s %d FPGA_CMD\n", __FUNCTION__, __LINE__);
 	if (IS_ERR(cmd_context))
 		return PTR_ERR(cmd_context);
+	pr_err("HMR %s %d FPGA_CMD\n", __FUNCTION__, __LINE__);
 
 	err = mlx5_fpga_ipsec_cmd_wait(cmd_context);
+	pr_err("HMR %s %d FPGA_CMD\n", __FUNCTION__, __LINE__);
 	if (err)
 		goto out;
+	pr_err("HMR %s %d FPGA_CMD\n", __FUNCTION__, __LINE__);
 
 	sa = (struct mlx5_fpga_ipsec_sa *)&cmd_context->command;
 	if (sa->ipsec_sa_v1.sw_sa_handle != cmd_context->resp.sw_sa_handle) {
@@ -416,18 +423,13 @@ u32 mlx5_fpga_ipsec_device_caps(struct mlx5_core_dev *mdev)
 	struct mlx5_fpga_device *fdev = mdev->fpga;
 	u32 ret = 0;
 
-	pr_err("HMR %s %d\n", __FUNCTION__, __LINE__);
-	if (mlx5_fpga_is_ipsec_device(mdev)) {
-		pr_err("HMR %s %d\n", __FUNCTION__, __LINE__);
+	if (mlx5_fpga_is_ipsec_device(mdev))
 		ret |= MLX5_ACCEL_IPSEC_CAP_DEVICE;
-	} else
+	else
 		return ret;
 
-	pr_err("HMR %s %d\n", __FUNCTION__, __LINE__);
-	if (!fdev->ipsec) {
-		pr_err("HMR %s %d %d\n", __FUNCTION__, __LINE__, ret);
+	if (!fdev->ipsec)
 		return ret;
-	}
 
 	if (MLX5_GET(ipsec_extended_cap, fdev->ipsec->caps, esp))
 		ret |= MLX5_ACCEL_IPSEC_CAP_ESP;
@@ -444,7 +446,6 @@ u32 mlx5_fpga_ipsec_device_caps(struct mlx5_core_dev *mdev)
 	if (MLX5_GET(ipsec_extended_cap, fdev->ipsec->caps, esn))
 		ret |= MLX5_ACCEL_IPSEC_CAP_ESN;
 
-	pr_err("HMR %s %d %d\n", __FUNCTION__, __LINE__, ret);
 	return ret;
 }
 
@@ -559,7 +560,7 @@ static void mlx5_fpga_ipsec_build_hw_xfrm(struct mlx5_core_dev *mdev,
 	/* Duplicate 128 bit key twice according to HW layout */
 	if (aes_gcm->key_len == 128)
 		memcpy(&hw_sa->ipsec_sa_v1.key_enc[16],
-		       aes_gcm->aes_key, aes_gcm->key_len);
+		       aes_gcm->aes_key, aes_gcm->key_len / 8);
 
 	/* salt and seq_iv */
 	memcpy(&hw_sa->ipsec_sa_v1.gcm.salt_iv, &aes_gcm->seq_iv, sizeof(aes_gcm->seq_iv));
@@ -582,6 +583,8 @@ static void mlx5_fpga_ipsec_build_hw_xfrm(struct mlx5_core_dev *mdev,
 
 	/* rx handle */
 	hw_sa->ipsec_sa_v1.sw_sa_handle = htonl(xfrm_attrs->sa_handle);
+	pr_err("HMR %s %d sa_handle=%d\n", __FUNCTION__, __LINE__,
+			hw_sa->ipsec_sa_v1.sw_sa_handle);
 
 	/* enc mode */
 	switch (aes_gcm->key_len) {
@@ -613,8 +616,6 @@ static void mlx5_fpga_ipsec_build_hw_sa(struct mlx5_core_dev *mdev,
 					u32 spi, bool is_ipv6,
 					struct mlx5_fpga_ipsec_sa *hw_sa)
 {
-	memset(hw_sa, 0, sizeof(*hw_sa));
-
 	mlx5_fpga_ipsec_build_hw_xfrm(mdev, xfrm_attrs, hw_sa);
 
 	/* IPs */
@@ -764,7 +765,7 @@ void *mlx5_fpga_ipsec_create_sa_ctx(struct mlx5_core_dev *mdev,
 	struct mlx5_fpga_ipsec *fipsec = fdev->ipsec;
 	enum mlx5_fpga_ipsec_cmd cmd;
 	int err;
-	void *context = NULL;
+	void *context;
 
 	/* alloc SA */
 	sa_ctx = kzalloc(sizeof(*sa_ctx), GFP_KERNEL);
@@ -799,19 +800,24 @@ void *mlx5_fpga_ipsec_create_sa_ctx(struct mlx5_core_dev *mdev,
 
 	err = rhashtable_lookup_insert_fast(&fipsec->sa_hash, &sa_ctx->hash,
 					    rhash_sa);
-	if (err)
+	if (err) {
 		/* Can't bound different accel_xfrm to already existing sa_ctx.
 		 * This is because we can't support multiple ketmats for
 		 * same IPs and SPI
 		 */
+		context = ERR_PTR(-EEXIST);
 		goto unlock_hash;
+	}
 
 	/* Bound accel_xfrm to sa_ctx */
 	cmd = is_v2_sadb_supported(fdev->ipsec) ?
 		MLX5_FPGA_IPSEC_CMD_ADD_SA_V2 : MLX5_FPGA_IPSEC_CMD_ADD_SA;
 	err = mlx5_fpga_ipsec_update_hw_sa(fdev, &sa_ctx->hw_sa, cmd);
-	if (err)
+	sa_ctx->hw_sa.ipsec_sa_v1.cmd = 0;
+	if (err) {
+		context = ERR_PTR(err);
 		goto delete_hash;
+	}
 
 	mutex_unlock(&fipsec->sa_hash_lock);
 
@@ -908,6 +914,7 @@ static void mlx5_fpga_ipsec_release_sa_ctx(struct mlx5_fpga_ipsec_sa_ctx *sa_ctx
 					MLX5_FPGA_IPSEC_CMD_DEL_SA_V2 : MLX5_FPGA_IPSEC_CMD_DEL_SA;
 
 	err = mlx5_fpga_ipsec_update_hw_sa(fdev, &sa_ctx->hw_sa, cmd);
+	sa_ctx->hw_sa.ipsec_sa_v1.cmd = 0;
 	if (err) {
 		WARN_ON(err);
 		return;
@@ -925,7 +932,9 @@ void mlx5_fpga_ipsec_delete_sa_ctx(void *context)
 			((struct mlx5_fpga_ipsec_sa_ctx *)context)->fpga_xfrm;
 
 	mutex_lock(&fpga_xfrm->lock);
-	if (--fpga_xfrm->num_rules) {
+	pr_err("HMR %s %d num_rules=%d\n", __FUNCTION__, __LINE__, fpga_xfrm->num_rules);
+	if (!--fpga_xfrm->num_rules) {
+		pr_err("HMR %s %d\n", __FUNCTION__, __LINE__);
 		mlx5_fpga_ipsec_release_sa_ctx(fpga_xfrm->sa_ctx);
 		fpga_xfrm->sa_ctx = NULL;
 	}
@@ -1375,7 +1384,7 @@ struct mlx5_accel_esp_xfrm *mlx5_fpga_esp_create_xfrm(struct mlx5_core_dev *mdev
 		return ERR_PTR(-EOPNOTSUPP);
 	}
 
-	if (!mlx5_fpga_esp_validate_xfrm_attrs(mdev, attrs)) {
+	if (mlx5_fpga_esp_validate_xfrm_attrs(mdev, attrs)) {
 		mlx5_core_warn(mdev, "Tried to create an esp with unsupported attrs\n");
 		return ERR_PTR(-EOPNOTSUPP);
 	}
@@ -1448,8 +1457,9 @@ int mlx5_fpga_esp_modify_xfrm(struct mlx5_accel_esp_xfrm *xfrm,
 		goto rollback_sa;
 
 	/* modify device with new hw_sa */
-	err = mlx5_fpga_ipsec_update_hw_sa(fdev, &org_hw_sa,
+	err = mlx5_fpga_ipsec_update_hw_sa(fdev, &fpga_xfrm->sa_ctx->hw_sa,
 					   MLX5_FPGA_IPSEC_CMD_MOD_SA_V2);
+	fpga_xfrm->sa_ctx->hw_sa.ipsec_sa_v1.cmd = 0;
 	if (err)
 		WARN_ON(rhashtable_remove_fast(&fipsec->sa_hash,
 					       &fpga_xfrm->sa_ctx->hash,

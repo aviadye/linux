@@ -176,8 +176,8 @@ static void mlx5e_ipsec_set_swp(struct sk_buff *skb,
 	}
 }
 
-static void mlx5e_ipsec_set_iv(struct sk_buff *skb, struct xfrm_state *x,
-			       struct xfrm_offload *xo)
+void mlx5e_ipsec_set_iv_esn(struct sk_buff *skb, struct xfrm_state *x,
+			    struct xfrm_offload *xo)
 {
 	struct xfrm_replay_state_esn *replay_esn = x->replay_esn;
 	__u32 oseq = replay_esn->oseq;
@@ -194,6 +194,18 @@ static void mlx5e_ipsec_set_iv(struct sk_buff *skb, struct xfrm_state *x,
 
 	/* Place the SN in the IV field */
 	seqno = cpu_to_be64(xo->seq.low + ((u64)seq_hi << 32));
+	iv_offset = skb_transport_offset(skb) + sizeof(struct ip_esp_hdr);
+	skb_store_bits(skb, iv_offset, &seqno, 8);
+}
+
+void mlx5e_ipsec_set_iv(struct sk_buff *skb, struct xfrm_state *x,
+			struct xfrm_offload *xo)
+{
+	int iv_offset;
+	__be64 seqno;
+
+	/* Place the SN in the IV field */
+	seqno = cpu_to_be64(xo->seq.low + ((u64)xo->seq.hi << 32));
 	iv_offset = skb_transport_offset(skb) + sizeof(struct ip_esp_hdr);
 	skb_store_bits(skb, iv_offset, &seqno, 8);
 }
@@ -240,7 +252,6 @@ struct sk_buff *mlx5e_ipsec_handle_tx_skb(struct net_device *netdev,
 	struct xfrm_offload *xo = xfrm_offload(skb);
 	struct mlx5e_ipsec_metadata *mdata;
 	struct xfrm_state *x;
-
 	if (!xo)
 		return skb;
 
@@ -273,7 +284,7 @@ struct sk_buff *mlx5e_ipsec_handle_tx_skb(struct net_device *netdev,
 		goto drop;
 	}
 	mlx5e_ipsec_set_swp(skb, &wqe->eth, x->props.mode, xo);
-	mlx5e_ipsec_set_iv(skb, x, xo);
+	((struct mlx5e_ipsec_sa_entry *)x->xso.offload_handle)->set_iv_op(skb, x, xo);
 	mlx5e_ipsec_set_metadata(skb, mdata, xo);
 
 	return skb;
@@ -299,6 +310,8 @@ mlx5e_ipsec_build_sp(struct net_device *netdev, struct sk_buff *skb,
 	}
 
 	sa_handle = be32_to_cpu(mdata->content.rx.sa_handle);
+	pr_err("HMR %s %d RX sa_handle=%d\n", __FUNCTION__, __LINE__,
+			sa_handle);
 	xs = mlx5e_ipsec_sadb_rx_lookup(priv->ipsec, sa_handle);
 	if (unlikely(!xs)) {
 		atomic64_inc(&priv->ipsec->sw_stats.ipsec_rx_drop_sadb_miss);
