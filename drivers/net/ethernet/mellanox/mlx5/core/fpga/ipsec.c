@@ -423,9 +423,10 @@ u32 mlx5_fpga_ipsec_device_caps(struct mlx5_core_dev *mdev)
 	struct mlx5_fpga_device *fdev = mdev->fpga;
 	u32 ret = 0;
 
-	if (mlx5_fpga_is_ipsec_device(mdev))
+	if (mlx5_fpga_is_ipsec_device(mdev)) {
 		ret |= MLX5_ACCEL_IPSEC_CAP_DEVICE;
-	else
+		ret |= MLX5_ACCEL_IPSEC_CAP_REQUIRED_METADATA;
+	} else
 		return ret;
 
 	if (!fdev->ipsec)
@@ -443,8 +444,10 @@ u32 mlx5_fpga_ipsec_device_caps(struct mlx5_core_dev *mdev)
 	if (MLX5_GET(ipsec_extended_cap, fdev->ipsec->caps, rx_no_trailer))
 		ret |= MLX5_ACCEL_IPSEC_CAP_RX_NO_TRAILER;
 
-	if (MLX5_GET(ipsec_extended_cap, fdev->ipsec->caps, esn))
+	if (MLX5_GET(ipsec_extended_cap, fdev->ipsec->caps, esn)) {
 		ret |= MLX5_ACCEL_IPSEC_CAP_ESN;
+		ret |= MLX5_ACCEL_IPSEC_CAP_TX_IV_IS_ESN;
+	}
 
 	return ret;
 }

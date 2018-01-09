@@ -103,14 +103,18 @@ enum {
 
 enum mlx5_accel_ipsec_cap {
 	MLX5_ACCEL_IPSEC_CAP_DEVICE		= 1 << 0,
-	MLX5_ACCEL_IPSEC_CAP_IPV6		= 1 << 1,
+	MLX5_ACCEL_IPSEC_CAP_REQUIRED_METADATA	= 1 << 1,
 	MLX5_ACCEL_IPSEC_CAP_ESP		= 1 << 2,
-	MLX5_ACCEL_IPSEC_CAP_LSO		= 1 << 3,
-	MLX5_ACCEL_IPSEC_CAP_RX_NO_TRAILER	= 1 << 4,
-	MLX5_ACCEL_IPSEC_CAP_ESN		= 1 << 5,
+	MLX5_ACCEL_IPSEC_CAP_IPV6		= 1 << 3,
+	MLX5_ACCEL_IPSEC_CAP_LSO		= 1 << 4,
+	MLX5_ACCEL_IPSEC_CAP_RX_NO_TRAILER	= 1 << 5,
+	MLX5_ACCEL_IPSEC_CAP_ESN		= 1 << 6,
+	MLX5_ACCEL_IPSEC_CAP_TX_IV_IS_ESN	= 1 << 7,
 };
 
 #ifdef CONFIG_MLX5_ACCEL
+
+u32 mlx5_accel_ipsec_device_caps(struct mlx5_core_dev *mdev);
 
 struct mlx5_accel_esp_xfrm *mlx5_accel_esp_create_xfrm(struct mlx5_core_dev *mdev,
 						       const struct mlx5_accel_esp_xfrm_attrs *attrs,
@@ -122,6 +126,11 @@ int mlx5_accel_esp_modify_xfrm(struct mlx5_accel_esp_xfrm *xfrm,
 			       const struct mlx5_accel_esp_xfrm_attrs *attrs);
 
 #else
+
+static inline u32 mlx5_accel_ipsec_device_caps(struct mlx5_core_dev *mdev)
+{
+	return 0;
+}
 
 static inline struct mlx5_accel_esp_xfrm *mlx5_accel_esp_create_xfrm(struct mlx5_core_dev *mdev,
 								     const struct mlx5_accel_xfrm_ipsec_attrs *attrs,

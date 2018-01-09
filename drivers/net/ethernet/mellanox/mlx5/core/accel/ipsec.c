@@ -41,6 +41,7 @@ u32 mlx5_accel_ipsec_device_caps(struct mlx5_core_dev *mdev)
 {
 	return mlx5_fpga_ipsec_device_caps(mdev);
 }
+EXPORT_SYMBOL_GPL(mlx5_accel_ipsec_device_caps);
 
 unsigned int mlx5_accel_ipsec_counters_count(struct mlx5_core_dev *mdev)
 {
